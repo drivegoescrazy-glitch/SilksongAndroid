@@ -13,26 +13,19 @@
 // tidy explanation, but pressing the bottom screen demonstrably does not break
 // the top one, so key routing is not it.
 //
-// What remains, and what this exists to catch, is InControl re-enumerating its
-// devices underneath the game. UnityInputDeviceManager.Update does this every
-// second:
+// One plausible remaining cause is InControl re-enumerating joysticks. Its
+// UnityInputDeviceManager.Update samples Input.GetJoystickNames() about once a
+// second. If the list's hash changes, it calls RefreshDevices(). That does NOT
+// blindly detach every controller: it reuses a device when its joystick ID and
+// profile still match. But if a name/slot flickers, the matching check can fail,
+// and a detach clears that device's control state and may discard a short press.
 //
-//     deviceRefreshTimer += deltaTime;
-//     if (deviceRefreshTimer >= 1f) {
-//         QueryJoystickInfo();                       // Input.GetJoystickNames()
-//         if (JoystickInfoHasChanged) {
-//             DetachDevices();                       // every device, including
-//             AttachDevices();                       // the one being held
-//         }
-//     }
-//
-// A detach sets InputManager.ActiveDevice to InputDevice.Null and throws away
-// every control's state, so a button held across the refresh is released and a
-// press that lands in the same frame is lost. It only takes the hashed list of
-// joystick names to wobble once, and the device has good reasons to wobble: it
-// exposes an "ODIN Station Virtual Mouse" alongside the pad, and Android logs
-// "InputReader: Reconfiguring input devices, changes=DISPLAY_INFO" whenever the
-// second panel's viewport is republished.
+// The handheld exposes an "ODIN Station Virtual Mouse" alongside the pad, and
+// Android logs "InputReader: Reconfiguring input devices, changes=DISPLAY_INFO"
+// when the second panel's viewport is republished. This makes joystick-name
+// churn plausible, but it is not proven until the probe logs a detach at the
+// time an input is missed. The build-time guard therefore waits for three
+// consecutive matching name samples before refreshing the device list.
 //
 // InControl would normally say so itself -- it logs "Change in attached Unity
 // joysticks detected" -- but the game's InControlManager.LogMessage is an empty
