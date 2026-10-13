@@ -208,9 +208,36 @@ internal static class Builtin
                 var inputType = module.GetTypeReferences().FirstOrDefault(t =>
                     t.FullName == "UnityEngine.Input");
 
-                if (update is null || refresh is null || joystickHash is null || inputType is null)
+                if (update is null || inputType is null)
                 {
-                    notes.Add("controller refresh guard: InControl shape differs; skipped");
+                    notes.Add("controller refresh guard: InControl update shape differs; skipped");
+                    return;
+                }
+
+                // InControl builds differ. Some use a single RefreshDevices()
+                // helper and a joystickHash field; others split the same work
+                // into QueryJoystickInfo / DetachDevices / AttachDevices.
+                // Support both instead of silently shipping a no-op on the
+                // latter.
+                if (refresh is null || joystickHash is null)
+                {
+                    var query = manager.Methods.FirstOrDefault(m =>
+                        m.Name == "QueryJoystickInfo" && m.HasBody && !m.IsStatic &&
+                        m.Parameters.Count == 0 && m.ReturnType.MetadataType == MetadataType.Void);
+                    var detach = manager.Methods.FirstOrDefault(m =>
+                        m.Name == "DetachDevices" && m.HasBody && !m.IsStatic &&
+                        m.Parameters.Count == 0 && m.ReturnType.MetadataType == MetadataType.Void);
+                    var attach = manager.Methods.FirstOrDefault(m =>
+                        m.Name == "AttachDevices" && m.HasBody && !m.IsStatic &&
+                        m.Parameters.Count == 0 && m.ReturnType.MetadataType == MetadataType.Void);
+                    if (query is null || detach is null || attach is null)
+                    {
+                        notes.Add("controller refresh guard: InControl shape differs; skipped");
+                        return;
+                    }
+
+                    WeaveLegacyInputRefreshGuard(
+                        assembly, path, manager, update, inputType, query, detach, attach, notes);
                     return;
                 }
 
@@ -374,6 +401,188 @@ internal static class Builtin
         }
 
         notes.Add("controller refresh guard: InControl.UnityInputDeviceManager not found; skipped");
+    }
+
+    /// <summary>
+    /// Debounces the older InControl variant, where the update routine calls
+    /// QueryJoystickInfo and then detaches/attaches devices in separate methods.
+    /// No private joystick-list representation is assumed: the last-applied
+    /// snapshot is maintained by this guard and only changes after a stable
+    /// refresh. The constructor already performed the initial attachment.
+    /// </summary>
+    static void WeaveLegacyInputRefreshGuard(
+        AssemblyDefinition assembly,
+        string path,
+        TypeDefinition manager,
+        MethodDefinition update,
+        TypeReference inputType,
+        MethodDefinition query,
+        MethodDefinition detach,
+        MethodDefinition attach,
+        List<string> notes)
+    {
+        var module = assembly.MainModule;
+        var candidate = new FieldDefinition(
+            "silksongRefreshCandidateHash", FieldAttributes.Private, module.TypeSystem.String);
+        var stable = new FieldDefinition(
+            "silksongRefreshStableSamples", FieldAttributes.Private, module.TypeSystem.Int32);
+        var timer = new FieldDefinition(
+            "silksongRefreshSampleTimer", FieldAttributes.Private, module.TypeSystem.Single);
+        var applied = new FieldDefinition(
+            "silksongRefreshAppliedHash", FieldAttributes.Private, module.TypeSystem.String);
+        manager.Fields.Add(candidate);
+        manager.Fields.Add(stable);
+        manager.Fields.Add(timer);
+        manager.Fields.Add(applied);
+
+        var getNames = new MethodReference(
+            "GetJoystickNames", new ArrayType(module.TypeSystem.String), inputType)
+        {
+            HasThis = false,
+            CallingConvention = MethodCallingConvention.Default,
+        };
+        var join = new MethodReference(
+            "Join", module.TypeSystem.String, module.TypeSystem.String)
+        {
+            HasThis = false,
+            CallingConvention = MethodCallingConvention.Default,
+        };
+        join.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+        join.Parameters.Add(new ParameterDefinition(new ArrayType(module.TypeSystem.String)));
+
+        var format = new MethodReference(
+            "Format", module.TypeSystem.String, module.TypeSystem.String)
+        {
+            HasThis = false,
+            CallingConvention = MethodCallingConvention.Default,
+        };
+        format.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+        format.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
+        format.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
+
+        var equals = new MethodReference(
+            "op_Equality", module.TypeSystem.Boolean, module.TypeSystem.String)
+        {
+            HasThis = false,
+            CallingConvention = MethodCallingConvention.Default,
+        };
+        equals.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+        equals.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+
+        var body = update.Body;
+        body.Instructions.Clear();
+        body.ExceptionHandlers.Clear();
+        body.Variables.Clear();
+        body.InitLocals = true;
+        var namesLocal = new VariableDefinition(new ArrayType(module.TypeSystem.String));
+        var hashLocal = new VariableDefinition(module.TypeSystem.String);
+        body.Variables.Add(namesLocal);
+        body.Variables.Add(hashLocal);
+        body.MaxStackSize = 4;
+
+        var il = body.GetILProcessor();
+        var done = il.Create(OpCodes.Ret);
+        var sampleStable = il.Create(OpCodes.Nop);
+        var countCheck = il.Create(OpCodes.Nop);
+        var compareApplied = il.Create(OpCodes.Nop);
+
+        // Keep the same one-second sampling cadence as the original manager.
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Dup));
+        il.Append(il.Create(OpCodes.Ldfld, timer));
+        il.Append(il.Create(OpCodes.Ldarg_2));
+        il.Append(il.Create(OpCodes.Add));
+        il.Append(il.Create(OpCodes.Stfld, timer));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, timer));
+        il.Append(il.Create(OpCodes.Ldc_R4, 1.0f));
+        il.Append(il.Create(OpCodes.Blt, done));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldc_R4, 0.0f));
+        il.Append(il.Create(OpCodes.Stfld, timer));
+
+        // Make the exact count/name string used by InControl's joystick hash.
+        il.Append(il.Create(OpCodes.Call, getNames));
+        il.Append(il.Create(OpCodes.Stloc, namesLocal));
+        il.Append(il.Create(OpCodes.Ldstr, "{0}: {1}"));
+        il.Append(il.Create(OpCodes.Ldloc, namesLocal));
+        il.Append(il.Create(OpCodes.Ldlen));
+        il.Append(il.Create(OpCodes.Conv_I4));
+        il.Append(il.Create(OpCodes.Box, module.TypeSystem.Int32));
+        il.Append(il.Create(OpCodes.Ldstr, ", "));
+        il.Append(il.Create(OpCodes.Ldloc, namesLocal));
+        il.Append(il.Create(OpCodes.Call, join));
+        il.Append(il.Create(OpCodes.Call, format));
+        il.Append(il.Create(OpCodes.Stloc, hashLocal));
+
+        // A new snapshot restarts the stability window; matching samples count
+        // to three and then stop incrementing.
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, candidate));
+        il.Append(il.Create(OpCodes.Ldloc, hashLocal));
+        il.Append(il.Create(OpCodes.Call, equals));
+        il.Append(il.Create(OpCodes.Brtrue, sampleStable));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldloc, hashLocal));
+        il.Append(il.Create(OpCodes.Stfld, candidate));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldc_I4_1));
+        il.Append(il.Create(OpCodes.Stfld, stable));
+        il.Append(il.Create(OpCodes.Br, countCheck));
+
+        il.Append(sampleStable);
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, stable));
+        il.Append(il.Create(OpCodes.Ldc_I4_3));
+        il.Append(il.Create(OpCodes.Bge, countCheck));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, stable));
+        il.Append(il.Create(OpCodes.Ldc_I4_1));
+        il.Append(il.Create(OpCodes.Add));
+        il.Append(il.Create(OpCodes.Stfld, stable));
+
+        il.Append(countCheck);
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, stable));
+        il.Append(il.Create(OpCodes.Ldc_I4_3));
+        il.Append(il.Create(OpCodes.Blt, done));
+
+        // Establish a baseline for the list already attached by the constructor.
+        // A persistent later change is the only one that triggers a refresh.
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, applied));
+        il.Append(il.Create(OpCodes.Brtrue, compareApplied));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, candidate));
+        il.Append(il.Create(OpCodes.Stfld, applied));
+        il.Append(il.Create(OpCodes.Br, done));
+
+        il.Append(compareApplied);
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, applied));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, candidate));
+        il.Append(il.Create(OpCodes.Call, equals));
+        il.Append(il.Create(OpCodes.Brtrue, done));
+
+        // Preserve the original order: query the current list, detach, then attach.
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Call, query));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Call, detach));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Call, attach));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldarg_0));
+        il.Append(il.Create(OpCodes.Ldfld, candidate));
+        il.Append(il.Create(OpCodes.Stfld, applied));
+        il.Append(done);
+
+        assembly.Write(path);
+        notes.Add("controller refresh guard: debounced split Query/Detach/Attach InControl API in " +
+                  Path.GetFileName(path));
     }
 
     /// <summary>
