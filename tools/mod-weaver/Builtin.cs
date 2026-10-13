@@ -87,6 +87,12 @@ internal static class Builtin
     public static List<string> Apply(string assemblies)
     {
         var notes = new List<string>();
+
+        // Controller names reported by Android can flicker during display
+        // reconfiguration. Debounce that list before InControl is allowed to
+        // detach and rebuild its live devices.
+        WeaveInputRefreshGuard(assemblies, notes);
+
         var path = Path.Combine(assemblies, "Assembly-CSharp.dll");
         if (!File.Exists(path))
         {
@@ -134,6 +140,240 @@ internal static class Builtin
             notes.Add($"aspect floor: could not write Assembly-CSharp.dll ({e.GetType().Name}: {e.Message})");
         }
         return notes;
+    }
+
+    /// <summary>
+    /// Makes InControl's Unity joystick refresh tolerant of transient name-list
+    /// changes. Some Android handhelds republish joystick names while changing
+    /// display configuration. A one-sample change makes InControl detach a
+    /// controller even when the hardware never disconnected, which can discard
+    /// an edge such as a short jump press.
+    ///
+    /// This replaces only UnityInputDeviceManager.Update's *enumeration check*.
+    /// Device control polling remains unchanged. A new joystick-name hash must
+    /// appear on three consecutive one-second samples before RefreshDevices is
+    /// called, so real connect/disconnect changes still take effect after about
+    /// three seconds while one-off flickers are ignored.
+    ///
+    /// It is deliberately applied to whichever staged assembly actually owns
+    /// InControl.UnityInputDeviceManager; Unity/package versions differ in where
+    /// that type is compiled. Unknown versions are left untouched.
+    /// </summary>
+    static void WeaveInputRefreshGuard(string assemblies, List<string> notes)
+    {
+        var paths = Directory.GetFiles(assemblies, "*.dll", SearchOption.TopDirectoryOnly);
+        Array.Sort(paths, (a, b) =>
+        {
+            int Rank(string p)
+            {
+                var n = Path.GetFileName(p);
+                if (n == "InControl.dll") return 0;
+                if (n == "Assembly-CSharp-firstpass.dll") return 1;
+                if (n == "Assembly-CSharp.dll") return 2;
+                return 3;
+            }
+            return Rank(a) != Rank(b) ? Rank(a).CompareTo(Rank(b)) :
+                StringComparer.Ordinal.Compare(a, b);
+        });
+
+        foreach (var path in paths)
+        {
+            try
+            {
+                using var assembly = AssemblyDefinition.ReadAssembly(path, new ReaderParameters
+                {
+                    InMemory = true,
+                    AssemblyResolver = new StagedResolver(assemblies),
+                });
+                var module = assembly.MainModule;
+                var manager = module.GetType("InControl.UnityInputDeviceManager");
+                if (manager is null) continue;
+
+                if (manager.Fields.Any(f => f.Name == "silksongRefreshCandidateHash"))
+                {
+                    notes.Add("controller refresh guard: already woven");
+                    return;
+                }
+
+                var update = manager.Methods.FirstOrDefault(m =>
+                    m.Name == "Update" && m.HasBody && !m.IsStatic &&
+                    m.Parameters.Count == 2 &&
+                    m.Parameters[0].ParameterType.FullName == "System.UInt64" &&
+                    m.Parameters[1].ParameterType.FullName == "System.Single");
+                var refresh = manager.Methods.FirstOrDefault(m =>
+                    m.Name == "RefreshDevices" && m.HasBody && !m.IsStatic &&
+                    m.Parameters.Count == 0);
+                var joystickHash = manager.Fields.FirstOrDefault(f =>
+                    f.Name == "joystickHash" && f.FieldType.FullName == "System.String");
+                var inputType = module.GetTypeReferences().FirstOrDefault(t =>
+                    t.FullName == "UnityEngine.Input");
+
+                if (update is null || refresh is null || joystickHash is null || inputType is null)
+                {
+                    notes.Add("controller refresh guard: InControl shape differs; skipped");
+                    return;
+                }
+
+                var candidate = new FieldDefinition(
+                    "silksongRefreshCandidateHash",
+                    FieldAttributes.Private,
+                    module.TypeSystem.String);
+                var stable = new FieldDefinition(
+                    "silksongRefreshStableSamples",
+                    FieldAttributes.Private,
+                    module.TypeSystem.Int32);
+                var timer = new FieldDefinition(
+                    "silksongRefreshSampleTimer",
+                    FieldAttributes.Private,
+                    module.TypeSystem.Single);
+                manager.Fields.Add(candidate);
+                manager.Fields.Add(stable);
+                manager.Fields.Add(timer);
+
+                var getNames = new MethodReference(
+                    "GetJoystickNames",
+                    new ArrayType(module.TypeSystem.String),
+                    inputType)
+                {
+                    HasThis = false,
+                    CallingConvention = MethodCallingConvention.Default,
+                };
+
+                var join = new MethodReference(
+                    "Join", module.TypeSystem.String, module.TypeSystem.String)
+                {
+                    HasThis = false,
+                    CallingConvention = MethodCallingConvention.Default,
+                };
+                join.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+                join.Parameters.Add(new ParameterDefinition(new ArrayType(module.TypeSystem.String)));
+
+                var format = new MethodReference(
+                    "Format", module.TypeSystem.String, module.TypeSystem.String)
+                {
+                    HasThis = false,
+                    CallingConvention = MethodCallingConvention.Default,
+                };
+                format.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+                format.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
+                format.Parameters.Add(new ParameterDefinition(module.TypeSystem.Object));
+
+                var equals = new MethodReference(
+                    "op_Equality", module.TypeSystem.Boolean, module.TypeSystem.String)
+                {
+                    HasThis = false,
+                    CallingConvention = MethodCallingConvention.Default,
+                };
+                equals.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+                equals.Parameters.Add(new ParameterDefinition(module.TypeSystem.String));
+
+                // The manager owns these fields, so this code is ordinary IL
+                // access rather than reflection or a runtime detour.
+                var body = update.Body;
+                body.Instructions.Clear();
+                body.ExceptionHandlers.Clear();
+                body.Variables.Clear();
+                body.InitLocals = true;
+                var namesLocal = new VariableDefinition(new ArrayType(module.TypeSystem.String));
+                var hashLocal = new VariableDefinition(module.TypeSystem.String);
+                body.Variables.Add(namesLocal);
+                body.Variables.Add(hashLocal);
+                body.MaxStackSize = 4;
+
+                var il = body.GetILProcessor();
+                var done = il.Create(OpCodes.Ret);
+                var sampleStable = il.Create(OpCodes.Nop);
+                var countCheck = il.Create(OpCodes.Nop);
+
+                // Sample no faster than once per second.
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Dup));
+                il.Append(il.Create(OpCodes.Ldfld, timer));
+                il.Append(il.Create(OpCodes.Ldarg_2));
+                il.Append(il.Create(OpCodes.Add));
+                il.Append(il.Create(OpCodes.Stfld, timer));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, timer));
+                il.Append(il.Create(OpCodes.Ldc_R4, 1.0f));
+                il.Append(il.Create(OpCodes.Blt, done));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldc_R4, 0.0f));
+                il.Append(il.Create(OpCodes.Stfld, timer));
+
+                // Use the same hash representation as InControl's original
+                // property: "<count>: <comma-separated joystick names>".
+                il.Append(il.Create(OpCodes.Call, getNames));
+                il.Append(il.Create(OpCodes.Stloc, namesLocal));
+                il.Append(il.Create(OpCodes.Ldstr, "{0}: {1}"));
+                il.Append(il.Create(OpCodes.Ldloc, namesLocal));
+                il.Append(il.Create(OpCodes.Ldlen));
+                il.Append(il.Create(OpCodes.Conv_I4));
+                il.Append(il.Create(OpCodes.Box, module.TypeSystem.Int32));
+                il.Append(il.Create(OpCodes.Ldstr, ", "));
+                il.Append(il.Create(OpCodes.Ldloc, namesLocal));
+                il.Append(il.Create(OpCodes.Call, join));
+                il.Append(il.Create(OpCodes.Call, format));
+                il.Append(il.Create(OpCodes.Stloc, hashLocal));
+
+                // A changed value starts a new stability window; matching
+                // samples saturate at three so this counter never overflows.
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, candidate));
+                il.Append(il.Create(OpCodes.Ldloc, hashLocal));
+                il.Append(il.Create(OpCodes.Call, equals));
+                il.Append(il.Create(OpCodes.Brtrue, sampleStable));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldloc, hashLocal));
+                il.Append(il.Create(OpCodes.Stfld, candidate));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldc_I4_1));
+                il.Append(il.Create(OpCodes.Stfld, stable));
+                il.Append(il.Create(OpCodes.Br, countCheck));
+
+                il.Append(sampleStable);
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, stable));
+                il.Append(il.Create(OpCodes.Ldc_I4_3));
+                il.Append(il.Create(OpCodes.Bge, countCheck));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, stable));
+                il.Append(il.Create(OpCodes.Ldc_I4_1));
+                il.Append(il.Create(OpCodes.Add));
+                il.Append(il.Create(OpCodes.Stfld, stable));
+
+                il.Append(countCheck);
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, stable));
+                il.Append(il.Create(OpCodes.Ldc_I4_3));
+                il.Append(il.Create(OpCodes.Blt, done));
+
+                // No refresh when the stable list is the one already attached.
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, joystickHash));
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldfld, candidate));
+                il.Append(il.Create(OpCodes.Call, equals));
+                il.Append(il.Create(OpCodes.Brtrue, done));
+
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Call, refresh));
+                il.Append(done);
+
+                assembly.Write(path);
+                notes.Add("controller refresh guard: debounced InControl joystick changes in " +
+                          Path.GetFileName(path));
+                return;
+            }
+            catch (Exception e)
+            {
+                notes.Add("controller refresh guard: skipped " + Path.GetFileName(path) +
+                          " (" + e.GetType().Name + ")");
+                return;
+            }
+        }
+
+        notes.Add("controller refresh guard: InControl.UnityInputDeviceManager not found; skipped");
     }
 
     /// <summary>
