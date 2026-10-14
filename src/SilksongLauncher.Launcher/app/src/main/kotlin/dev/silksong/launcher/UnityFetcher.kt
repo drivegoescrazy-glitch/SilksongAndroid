@@ -173,14 +173,38 @@ object UnityFetcher {
      * the device from the depot's assemblies. Only Unity's own two go with it.
      */
     private fun stageEngine(root: File, staging: File) {
-        val libs = engineLibsIn(File(root, "android")) ?: return
-        staging.mkdirs()
+        val libs = engineLibsIn(File(root, "android"))
+            ?: throw java.io.IOException("Unity Android ARM64 engine libraries are missing under ${File(root, "android")}")
+        if (!staging.isDirectory && !staging.mkdirs()) {
+            throw java.io.IOException("could not create engine staging directory: $staging")
+        }
         for (name in listOf("libunity.so", "libmain.so")) {
             val src = File(libs, name)
             val dst = File(staging, name)
-            if (!src.isFile || dst.length() == src.length()) continue
-            src.copyTo(dst, overwrite = true)
-            LauncherLog.log("staged $name for install (${src.length()} bytes)")
+            if (!src.isFile || src.length() == 0L) {
+                throw java.io.IOException("required Unity engine library is missing or empty: $src")
+            }
+            // Size equality alone is not proof of equality. A truncated or stale
+            // same-sized library can load the wrong Unity runtime and leave only
+            // a black screen. Compare hashes on cache hits; stage replacements
+            // atomically so interruption never leaves a partial library in place.
+            if (dst.isFile && dst.length() == src.length() && sha256(dst) == sha256(src)) continue
+            val tmp = File(staging, "$name.part")
+            tmp.delete()
+            src.copyTo(tmp, overwrite = true)
+            if (tmp.length() != src.length() || sha256(tmp) != sha256(src)) {
+                tmp.delete()
+                throw java.io.IOException("staged Unity library failed verification: $name")
+            }
+            if (dst.exists() && !dst.delete()) {
+                tmp.delete()
+                throw java.io.IOException("could not replace stale Unity library: $dst")
+            }
+            if (!tmp.renameTo(dst)) {
+                tmp.delete()
+                throw java.io.IOException("could not atomically stage Unity library: $dst")
+            }
+            LauncherLog.log("staged and verified $name (${src.length()} bytes)")
         }
     }
 
