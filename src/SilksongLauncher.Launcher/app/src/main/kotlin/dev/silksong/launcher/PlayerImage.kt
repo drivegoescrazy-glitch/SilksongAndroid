@@ -96,7 +96,8 @@ object PlayerImage {
 
     fun isPresent(root: File): Boolean =
         File(imageDir(root), "globalgamemanagers").isFile &&
-            File(imageDir(root), "Managed/Metadata/global-metadata.dat").length() > 0
+            File(imageDir(root), "Managed/Metadata/global-metadata.dat").length() > 0 &&
+            File(catalogDir(root), "catalog.bin").let { it.isFile && it.length() > 0 }
 
     // ── staleness ──────────────────────────────────────────────────────────
     //
@@ -308,19 +309,23 @@ object PlayerImage {
         val aaOut = catalogDir(root)
         aaOut.deleteRecursively()
         val catalog = File(aaSrc, "catalog.bin")
-        if (catalog.isFile) {
-            aaOut.mkdirs()
-            catalog.copyTo(File(aaOut, "catalog.bin"), overwrite = true)
-            File(aaSrc, "settings.json").takeIf { it.isFile }
-                ?.copyTo(File(aaOut, "settings.json"), overwrite = true)
-            send(Progress("Repointing the catalog", -1f, contentRoot))
-            // Idempotent: the token is gone after the first pass, which is
-            // what makes a re-run safe rather than an error.
-            val patched = File(aaOut, "catalog.bin")
-            val r = tryRun(surgery, context, listOf("patch-catalog-path", patched.absolutePath, patched.absolutePath, contentRoot))
-            if (!r.ok) LauncherLog.log("catalog: already repointed, or ${r.output.trim().take(160)}")
-        } else {
-            LauncherLog.log("no catalog.bin under $aaSrc -- Addressables content will not resolve")
+        if (!catalog.isFile || catalog.length() == 0L) {
+            throw IOException("required Addressables catalog is missing or empty: $catalog; refusing to build a player that can only show a black screen")
+        }
+        if (!aaOut.isDirectory && !aaOut.mkdirs()) {
+            throw IOException("could not create the player catalog directory: $aaOut")
+        }
+        catalog.copyTo(File(aaOut, "catalog.bin"), overwrite = true)
+        File(aaSrc, "settings.json").takeIf { it.isFile }
+            ?.copyTo(File(aaOut, "settings.json"), overwrite = true)
+        send(Progress("Repointing the catalog", -1f, contentRoot))
+        // Idempotent: the token is gone after the first pass, which makes a
+        // re-run safe. The catalog is nevertheless required and verified below.
+        val patched = File(aaOut, "catalog.bin")
+        val r = tryRun(surgery, context, listOf("patch-catalog-path", patched.absolutePath, patched.absolutePath, contentRoot))
+        if (!r.ok) LauncherLog.log("catalog path patch was not applied (possibly already repointed): ${r.output.trim().take(160)}")
+        if (!patched.isFile || patched.length() == 0L) {
+            throw IOException("Addressables catalog was not written correctly: $patched")
         }
 
         LauncherLog.log("player image: ${img.walkTopDown().filter { it.isFile }.sumOf { it.length() } / 1024 / 1024} MB")
