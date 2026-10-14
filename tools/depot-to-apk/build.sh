@@ -42,7 +42,7 @@ OUT="${OUT:-$BUILD_ROOT/depot-apk}"
 APK_DIR="${APK_DIR:-$REPO_ROOT/build}"
 STEPS="${STEPS:-5,6}"
 
-PKG="${PKG:-com.jakobkhansen.silksong}"
+PKG="${PKG:-com.drivegoescrazy.silksongandroid.test}"
 APP_LABEL="${APP_LABEL:-Hollow Knight: Silksong}"
 # The version the stock engine reports. The depot is stamped with an internal
 # branch build of the same numeric version and must be normalised to this.
