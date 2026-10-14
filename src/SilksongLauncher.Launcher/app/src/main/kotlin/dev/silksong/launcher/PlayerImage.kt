@@ -91,8 +91,14 @@ object PlayerImage {
      * directory name is even counted. The short path is a symlink to the real
      * tree, made by install below.
      */
+    // Addressables reserves exactly 56 bytes for this path. Keep it short
+    // even when a fork uses a long application ID: /data/data is Android's
+    // supported alias for /data/user/0, and the app-owned "a" symlink lives
+    // directly under the app data directory.
+    private const val CATALOG_ROOT_MAX_BYTES = 56
+
     fun contentRootFor(context: android.content.Context): String =
-        "/data/user/0/${context.packageName}/files/aa"
+        "/data/data/${context.packageName}/a"
 
     fun isPresent(root: File): Boolean =
         File(imageDir(root), "globalgamemanagers").isFile &&
@@ -322,8 +328,18 @@ object PlayerImage {
         // Idempotent: the token is gone after the first pass, which makes a
         // re-run safe. The catalog is nevertheless required and verified below.
         val patched = File(aaOut, "catalog.bin")
+        val rootBytes = contentRoot.toByteArray(Charsets.US_ASCII)
+        if (rootBytes.size > CATALOG_ROOT_MAX_BYTES) {
+            throw IOException(
+                "Addressables content path is too long (${rootBytes.size} bytes; maximum $CATALOG_ROOT_MAX_BYTES): $contentRoot"
+            )
+        }
         val r = tryRun(surgery, context, listOf("patch-catalog-path", patched.absolutePath, patched.absolutePath, contentRoot))
-        if (!r.ok) LauncherLog.log("catalog path patch was not applied (possibly already repointed): ${r.output.trim().take(160)}")
+        if (!r.ok) {
+            throw IOException(
+                "could not repoint Addressables catalog to '$contentRoot': ${r.output.trim().take(300)}"
+            )
+        }
         if (!patched.isFile || patched.length() == 0L) {
             throw IOException("Addressables catalog was not written correctly: $patched")
         }
@@ -399,12 +415,17 @@ object PlayerImage {
      * up with no content and a catalog pointing at nothing.
      */
     fun linkContent(filesDir: File, depot: File) {
+        val appDataDir = filesDir.parentFile
+            ?: throw IOException("could not resolve the app data directory from $filesDir")
         depotData(depot)?.let { data ->
             val content = File(data, "StreamingAssets/aa")
             if (content.isDirectory) {
-                ToolchainFetcher.symlink(content.absolutePath, File(filesDir, "aa"))
+                // Must match contentRootFor(): /data/data/<package>/a.
+                ToolchainFetcher.symlink(content.absolutePath, File(appDataDir, "a"))
+            } else {
+                throw IOException("Addressables content directory is missing: $content")
             }
-        }
+        } ?: throw IOException("game data directory is missing under $depot")
     }
 
     /**
