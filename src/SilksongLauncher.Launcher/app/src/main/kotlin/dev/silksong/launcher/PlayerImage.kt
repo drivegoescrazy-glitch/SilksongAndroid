@@ -45,6 +45,7 @@ import java.io.IOException
 import java.security.MessageDigest
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.coroutineContext
 
@@ -322,8 +323,11 @@ object PlayerImage {
             throw IOException("could not create the player catalog directory: $aaOut")
         }
         catalog.copyTo(File(aaOut, "catalog.bin"), overwrite = true)
-        File(aaSrc, "settings.json").takeIf { it.isFile }
-            ?.copyTo(File(aaOut, "settings.json"), overwrite = true)
+        val settings = File(aaSrc, "settings.json")
+        if (!settings.isFile || settings.length() == 0L) {
+            throw IOException("required Addressables settings.json is missing or empty: $settings")
+        }
+        settings.copyTo(File(aaOut, "settings.json"), overwrite = true)
         send(Progress("Repointing the catalog", -1f, contentRoot))
         // Idempotent: the token is gone after the first pass, which makes a
         // re-run safe. The catalog is nevertheless required and verified below.
@@ -343,10 +347,23 @@ object PlayerImage {
         if (!patched.isFile || patched.length() == 0L) {
             throw IOException("Addressables catalog was not written correctly: $patched")
         }
+        if (!containsBytes(patched, rootBytes)) {
+            throw IOException("Addressables catalog does not contain the expected content root after patching")
+        }
 
         LauncherLog.log("player image: ${img.walkTopDown().filter { it.isFile }.sumOf { it.length() } / 1024 / 1024} MB")
         send(Progress("Player image ready", 1f, ""))
     }.flowOn(Dispatchers.IO)
+
+    private fun containsBytes(file: File, expected: ByteArray): Boolean {
+        if (expected.isEmpty() || file.length() < expected.size) return false
+        val bytes = file.readBytes()
+        outer@ for (i in 0..bytes.size - expected.size) {
+            for (j in expected.indices) if (bytes[i + j] != expected[j]) continue@outer
+            return true
+        }
+        return false
+    }
 
     /**
      * Puts the image where the engine looks for it.
@@ -385,8 +402,29 @@ object PlayerImage {
             // does with jar --no-compress.
             zip.setMethod(ZipOutputStream.STORED)
             entries += addTree(zip, imageDir(root), "assets/bin/Data")
-            if (catalogDir(root).isDirectory) {
-                entries += addTree(zip, catalogDir(root), "assets/aa")
+            if (!catalogDir(root).isDirectory) {
+                throw IOException("player catalog directory is missing: ${catalogDir(root)}")
+            }
+            entries += addTree(zip, catalogDir(root), "assets/aa")
+        }
+        // A non-empty ZIP can still be an unusable Unity player. Verify the
+        // exact runtime-critical entries before replacing the last known-good
+        // data image, especially the Addressables settings and catalog.
+        val requiredEntries = listOf(
+            "assets/bin/Data/globalgamemanagers",
+            "assets/bin/Data/globalgamemanagers.assets",
+            "assets/bin/Data/resources.assets",
+            "assets/bin/Data/Managed/Metadata/global-metadata.dat",
+            "assets/aa/catalog.bin",
+            "assets/aa/settings.json",
+        )
+        ZipFile(tmp).use { zip ->
+            val missing = requiredEntries.filter { name ->
+                zip.getEntry(name)?.let { it.size > 0L } != true
+            }
+            if (missing.isNotEmpty()) {
+                tmp.delete()
+                throw IOException("player data image is incomplete; missing/empty ZIP entries: ${missing.joinToString()}")
             }
         }
         if (!tmp.renameTo(out)) {
