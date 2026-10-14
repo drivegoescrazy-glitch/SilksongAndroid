@@ -93,13 +93,17 @@ public class GameActivity extends PlayerActivity
     private void installEngine()
     {
         java.io.File ext = getExternalFilesDir(null);
-        if (ext == null) return;
+        if (ext == null)
+            throw new IllegalStateException("external files directory is unavailable");
         java.io.File src = new java.io.File(ext, "staging");
         if (!src.isDirectory()) src = new java.io.File(ext, "engine");
-        java.io.File[] libs = src.listFiles();
-        if (libs == null) return;
-
         java.io.File dst = externalLibDir();
+        java.io.File[] libs = src.listFiles();
+        if (libs == null)
+        {
+            verifyRequiredLibraries(dst);
+            return;
+        }
         if (!dst.isDirectory() && !dst.mkdirs())
         {
             android.util.Log.e(TAG, "could not create " + dst);
@@ -146,6 +150,17 @@ public class GameActivity extends PlayerActivity
             {
                 android.util.Log.e(TAG, "could not install " + so.getName() + ": " + e);
             }
+        }
+        verifyRequiredLibraries(dst);
+    }
+
+    private void verifyRequiredLibraries(java.io.File dir)
+    {
+        for (String name : new String[] { "libunity.so", "libmain.so", "libil2cpp.so" })
+        {
+            java.io.File f = new java.io.File(dir, name);
+            if (!f.isFile() || f.length() == 0)
+                throw new IllegalStateException("required native library is missing or empty: " + f);
         }
     }
 
@@ -234,7 +249,7 @@ public class GameActivity extends PlayerActivity
     private void stagePackageLayout()
     {
         java.io.File libDir = externalLibDir();
-        if (!new java.io.File(libDir, "libil2cpp.so").exists()) return;
+        verifyRequiredLibraries(libDir);
         try
         {
             android.content.pm.ApplicationInfo app = getApplicationContext().getApplicationInfo();
@@ -278,7 +293,8 @@ public class GameActivity extends PlayerActivity
             String lib = libDir.getAbsolutePath();
             applyPaths(app, apk, lib);
             applyPaths(super.getApplicationInfo(), apk, lib);
-            redirectPackageCodePath(apk);
+            if (!redirectPackageCodePath(apk))
+                throw new java.io.IOException("getPackageCodePath() was not redirected to " + apk);
             if (data.isFile()) addAssetPath(data.getAbsolutePath());
             else if (obbFile().isFile()) addAssetPath(obbFile().getAbsolutePath());
 
@@ -287,6 +303,7 @@ public class GameActivity extends PlayerActivity
         catch (Exception e)
         {
             android.util.Log.e("SilksongShell", "could not stage the package: " + e);
+            throw new IllegalStateException("Could not prepare Unity's package/data paths; see game-boot.log", e);
         }
     }
 
@@ -334,7 +351,7 @@ public class GameActivity extends PlayerActivity
     // and dex are not affected: the AssetManager and the class loader were
     // both built from the real APK before this runs, and neither consults
     // this field again.
-    private void redirectPackageCodePath(String apk)
+    private boolean redirectPackageCodePath(String apk)
     {
         try
         {
@@ -360,11 +377,14 @@ public class GameActivity extends PlayerActivity
             appDir.setAccessible(true);
             appDir.set(loadedApk, apk);
 
-            android.util.Log.i(TAG, "getPackageCodePath() -> " + getPackageCodePath());
+            String actual = getPackageCodePath();
+            android.util.Log.i(TAG, "getPackageCodePath() -> " + actual);
+            return apk.equals(actual);
         }
         catch (Exception e)
         {
             android.util.Log.e(TAG, "could not redirect getPackageCodePath: " + e);
+            return false;
         }
     }
 
