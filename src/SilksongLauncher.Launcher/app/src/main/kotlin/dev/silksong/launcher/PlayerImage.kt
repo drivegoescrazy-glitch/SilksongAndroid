@@ -103,8 +103,12 @@ object PlayerImage {
 
     fun isPresent(root: File): Boolean =
         File(imageDir(root), "globalgamemanagers").isFile &&
+            File(imageDir(root), "globalgamemanagers.assets").length() > 0 &&
+            File(imageDir(root), "resources.assets").length() > 0 &&
+            File(imageDir(root), "Resources/unity default resources").length() > 0 &&
             File(imageDir(root), "Managed/Metadata/global-metadata.dat").length() > 0 &&
-            File(catalogDir(root), "catalog.bin").let { it.isFile && it.length() > 0 }
+            File(catalogDir(root), "catalog.bin").let { it.isFile && it.length() > 0 } &&
+            File(catalogDir(root), "settings.json").let { it.isFile && it.length() > 0 }
 
     // ── staleness ──────────────────────────────────────────────────────────
     //
@@ -144,6 +148,7 @@ object PlayerImage {
         val metadata = File(Il2cppConverter.dataDir(root), "Metadata/global-metadata.dat")
         val ggm = depotData(depot)?.let { File(it, "globalgamemanagers") }
         return buildString {
+            append("player-image-schema-2").append('\n')
             append(UNITY_VERSION).append('\n')
             append(GRAPHICS_APIS).append('\n')
             append(metadata.length()).append('/').append(metadata.lastModified()).append('\n')
@@ -161,8 +166,25 @@ object PlayerImage {
      */
     fun isCurrent(root: File, pkgDir: File, depot: File): Boolean =
         isPresent(root) &&
-            File(pkgDir, "data.apk").length() > 0 &&
+            packedImageIsValid(File(pkgDir, "data.apk")) &&
             imageStampFile(root).takeIf { it.isFile }?.readText() == imageStamp(root, depot)
+
+    private fun packedImageIsValid(file: File): Boolean {
+        if (!file.isFile || file.length() == 0L) return false
+        val required = listOf(
+            "assets/bin/Data/globalgamemanagers",
+            "assets/bin/Data/globalgamemanagers.assets",
+            "assets/bin/Data/resources.assets",
+            "assets/bin/Data/Managed/Metadata/global-metadata.dat",
+            "assets/aa/catalog.bin",
+            "assets/aa/settings.json",
+        )
+        return runCatching {
+            ZipFile(file).use { zip ->
+                required.all { name -> zip.getEntry(name)?.size?.let { it > 0L } == true }
+            }
+        }.getOrDefault(false)
+    }
 
     fun markCurrent(root: File, depot: File) {
         imageStampFile(root).writeText(imageStamp(root, depot))
