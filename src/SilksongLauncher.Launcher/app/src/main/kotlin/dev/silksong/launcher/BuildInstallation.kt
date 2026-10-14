@@ -24,7 +24,7 @@ object BuildInstallation {
         }
         walk("ondevice")
         // Earlier markers could survive an interrupted same-APK mod rebuild.
-        return "2|" + md.digest().joinToString("") { "%02x".format(it) }.take(16)
+        return "3|" + md.digest().joinToString("") { "%02x".format(it) }.take(16)
     }
 
     private fun haveOutputs(pkg: File): Boolean {
