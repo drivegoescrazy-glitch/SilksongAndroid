@@ -110,6 +110,8 @@ class SetupActivity : Activity() {
     private lateinit var resetBuild: Button
     private lateinit var changeFolder: Button
     private var busy = false
+    private var buildStartedAt = 0L
+    private var lastOverallFraction = 0f
     // Set by an action to explain what just happened; cleared when the next
     // one starts. Null means the state summary is shown instead.
     private var message: String? = null
@@ -147,7 +149,9 @@ class SetupActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        scope.cancel()
+        // Long-running porting work should not be cancelled just because the
+        // Activity is destroyed while the foreground service keeps the process alive.
+        if (!busy) scope.cancel()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -538,30 +542,61 @@ class SetupActivity : Activity() {
         updateReset()
         progress.visibility = if (running) View.VISIBLE else View.INVISIBLE
         stepLabel.visibility = if (running && stepNumber > 0) View.VISIBLE else View.GONE
-        // The heading says what the app is doing, not what it is called: this
-        // screen is on for half an hour and "Silksong" alone reads as an idle
-        // title screen rather than work in progress.
         header.text = if (running) "Porting Silksong" else "Silksong Android"
         if (!running) return
         stepLabel.text = "STEP $stepNumber OF $stepCount"
         status.text = stepTitle.ifEmpty { sub }
-        // The sub-stage belongs with the percentage rather than in the
-        // headline: it changes several times within one step, and a heading
-        // that rewrites itself every few seconds reads as churn.
+
+        // One monotonic estimate for the entire pipeline, independent of its internal stages.
+        val overall = overallProgress(sub, fraction)
+        lastOverallFraction = maxOf(lastOverallFraction, overall).coerceIn(0f, 0.995f)
+        progress.isIndeterminate = false
+        progress.progress = (lastOverallFraction * 1000).toInt()
+        val pct = (lastOverallFraction * 100).toInt()
+        val eta = estimateRemaining(lastOverallFraction)
         val parts = mutableListOf<String>()
-        if (fraction >= 0f) {
-            progress.isIndeterminate = false
-            progress.progress = (fraction * 1000).toInt()
-            // A long step sits on "0%" for minutes, which reads as stuck. A
-            // decimal place moves early enough to show it is not.
-            val pct = fraction * 100
-            parts += if (pct < 10f) String.format("%.1f%%", pct) else "${pct.toInt()}%"
-        } else {
-            progress.isIndeterminate = true
-        }
-        if (stepTitle.isNotEmpty() && sub.isNotEmpty() && sub != stepTitle) parts += sub
+        parts += "$pct% overall"
+        parts += "ETA $eta"
+        if (sub.isNotEmpty() && sub != stepTitle) parts += sub
         if (note.isNotEmpty()) parts += note
         detail.text = parts.joinToString("   ")
+        runCatching {
+            PortBuildService.update(this, stepTitle.ifEmpty { sub.ifEmpty { "Porting Silksong" } }, pct, "Estimated time left: $eta")
+        }.onFailure { LauncherLog.log("Could not update build notification", it) }
+    }
+
+    private fun overallProgress(sub: String, fraction: Float): Float {
+        val label = (sub + " " + stepTitle).lowercase()
+        val f = if (fraction >= 0f) fraction.coerceIn(0f, 1f) else 0f
+        val band = when {
+            label.contains("downloading game") || label.contains("depot") -> 0.00f to 0.22f
+            stepTitle.contains("supporting tools", ignoreCase = true) || label.contains("unity") ||
+                label.contains("toolchain") || (label.contains("runtime") && !label.contains("engine runtime")) -> 0.22f to 0.40f
+            label.contains("converting") || label.contains("il2cpp conversion") -> 0.43f to 0.54f
+            label.contains("compiling the game") || label.contains("compiling the engine") ||
+                label.contains("linking the engine") -> 0.54f to 0.91f
+            label.contains("player image") || label.contains("packing") || label.contains("addressables") -> 0.91f to 0.98f
+            label.contains("retarget") || label.contains("content") || label.contains("installing") ||
+                label.contains("finishing") -> 0.98f to 0.995f
+            stepTitle.contains("Building", ignoreCase = true) -> 0.40f to 0.995f
+            else -> {
+                val denominator = stepCount.coerceAtLeast(1).toFloat()
+                val base = (stepNumber - 1).coerceAtLeast(0) / denominator
+                return (base + (if (fraction >= 0f) f / denominator else 0.01f)).coerceIn(0f, 0.995f)
+            }
+        }
+        return band.first + (band.second - band.first) * f
+    }
+
+    private fun estimateRemaining(fraction: Float): String {
+        val elapsed = ((System.currentTimeMillis() - buildStartedAt).coerceAtLeast(1L)) / 1000L
+        if (fraction < 0.01f || elapsed < 8L) return "calculating…"
+        val remaining = (elapsed * (1f - fraction) / fraction).toLong().coerceIn(0L, 24L * 60L * 60L)
+        return when {
+            remaining < 60L -> "under 1 min"
+            remaining < 3600L -> "${remaining / 60} min"
+            else -> "${remaining / 3600} hr ${(remaining % 3600) / 60} min"
+        }
     }
 
     /** Shows a message that survives the next refresh. */
@@ -949,6 +984,13 @@ class SetupActivity : Activity() {
         val buildStep = toolsStep + 1
 
         setStep(if (download != null) 1 else toolsStep, "Starting")
+        buildStartedAt = System.currentTimeMillis()
+        lastOverallFraction = 0f
+        try {
+            PortBuildService.start(this)
+        } catch (t: Throwable) {
+            LauncherLog.log("Could not start the background build service", t)
+        }
         setBusy(true, "", -1f, "")
         LauncherLog.log("depot: $depot, data: ${PlayerImage.depotData(depot)}")
         // Nothing survives the process being reclaimed, and a screen that
@@ -1074,6 +1116,7 @@ class SetupActivity : Activity() {
                 say("Failed: ${t.message}")
             } finally {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                PortBuildService.stop(this@SetupActivity)
                 setBusy(false)
                 refresh()
             }
