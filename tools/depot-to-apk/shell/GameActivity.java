@@ -176,11 +176,8 @@ public class GameActivity extends PlayerActivity
     private void addNativeLibraryPath()
     {
         java.io.File dir = externalLibDir();
-        if (!new java.io.File(dir, "libil2cpp.so").exists())
-        {
-            android.util.Log.i(TAG, "no external engine at " + dir + "; using the APK's");
-            return;
-        }
+        if (!new java.io.File(dir, "libil2cpp.so").isFile())
+            throw new IllegalStateException("compiled IL2CPP library is missing at " + dir);
 
         ClassLoader loader = getApplicationContext().getClassLoader();
         Object pathList;
@@ -194,7 +191,7 @@ public class GameActivity extends PlayerActivity
         catch (Exception e)
         {
             android.util.Log.e(TAG, "no pathList on " + loader.getClass() + ": " + e);
-            return;
+            throw new IllegalStateException("could not expose the compiled native library directory", e);
         }
 
         try
@@ -207,12 +204,19 @@ public class GameActivity extends PlayerActivity
         catch (Exception e)
         {
             android.util.Log.e(TAG, "addNativePath failed: " + e);
-            return;
+            throw new IllegalStateException("Android could not register the compiled IL2CPP library directory", e);
         }
 
-        // Ask the same question the engine asks, so the log says outright
-        // whether the lookup it depends on now succeeds.
-        android.util.Log.i(TAG, "findLibrary(\"il2cpp\") -> " + findLibrary(loader, "il2cpp"));
+        // Ask the same question the engine asks, so a broken path cannot turn
+        // into an unexplained black screen later in UnityPlayerActivity.
+        String resolved = findLibrary(loader, "il2cpp");
+        android.util.Log.i(TAG, "findLibrary(\"il2cpp\") -> " + resolved);
+        if (resolved != null && !resolved.startsWith("<unavailable:") &&
+            !new java.io.File(resolved).getCanonicalFile().equals(
+                new java.io.File(dir, "libil2cpp.so").getCanonicalFile()))
+        {
+            throw new IllegalStateException("class loader resolved IL2CPP to an unexpected library: " + resolved);
+        }
     }
 
     private static String findLibrary(ClassLoader loader, String name)
