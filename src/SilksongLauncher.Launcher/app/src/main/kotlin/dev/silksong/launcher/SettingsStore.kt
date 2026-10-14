@@ -44,6 +44,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_PERF_OVERLAY, false)
         set(value) { prefs.edit().putBoolean(KEY_PERF_OVERLAY, value).apply() }
 
+    /** Reduce costly Unity quality settings to favour steadier frame times. */
+    var performanceImprovements: Boolean
+        get() = prefs.getBoolean(KEY_PERFORMANCE_IMPROVEMENTS, false)
+        set(value) { prefs.edit().putBoolean(KEY_PERFORMANCE_IMPROVEMENTS, value).apply() }
+
     /**
      * When enabled, skip Silksong's startup intro (studio logos +
      * opening quote) and go straight to loading the main menu. Read
@@ -125,6 +130,7 @@ class SettingsStore(context: Context) {
         val dir = context.getExternalFilesDir(null) ?: return
         val text = buildString {
             append(KEY_PERF_OVERLAY).append('=').append(perfOverlay).append('\n')
+            append(KEY_PERFORMANCE_IMPROVEMENTS).append('=').append(performanceImprovements).append('\n')
             append(KEY_SKIP_INTRO).append('=').append(skipIntro).append('\n')
             append(KEY_DUAL_SCREEN).append('=').append(dualScreen).append('\n')
             append(KEY_SHOW_TOP_HUD).append('=').append(showTopHud).append('\n')
@@ -151,6 +157,7 @@ class SettingsStore(context: Context) {
         const val KEY_AUTO_PULL = "auto_pull"
         const val KEY_AUTO_PUSH = "auto_push"
         const val KEY_PERF_OVERLAY = "perf_overlay"
+        const val KEY_PERFORMANCE_IMPROVEMENTS = "performance_improvements"
         const val KEY_SKIP_INTRO = "skip_intro"
         const val KEY_DUAL_SCREEN = "dualscreen_enabled"
         const val KEY_SHOW_TOP_HUD = "dualscreen_show_top_hud"
