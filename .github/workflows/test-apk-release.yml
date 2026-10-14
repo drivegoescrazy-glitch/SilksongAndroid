@@ -4,7 +4,11 @@ on:
   push:
     branches: [master]
     paths:
+      - 'src/**'
+      - 'tools/**'
+      - 'Makefile'
       - 'VERSION'
+      - 'Directory.Build.props'
   workflow_dispatch:
 
 permissions:
