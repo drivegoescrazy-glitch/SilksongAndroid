@@ -58,6 +58,13 @@ services:
     environment:
       # Skip the Gradle build when only shell/ or build.sh changed.
       LAUNCHER: "${LAUNCHER:-1}"
+      # Release signing is supplied by GitHub Actions secrets. Never bake a
+      # private keystore into the public repository or image.
+      KEYSTORE_BASE64: "${KEYSTORE_BASE64:-}"
+      KS_PASS: "${KS_PASS:-}"
+      KEY_PASS: "${KEY_PASS:-}"
+      KEY_ALIAS: "${KEY_ALIAS:-}"
+      DEBUGGABLE: "${DEBUGGABLE:-1}"
       # This service is one build per container, so a daemon is never reused --
       # it just gets killed holding locks in the cache volume, and the next
       # run times out waiting for them. The devbox service below is the
