@@ -28,21 +28,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Require persistent release signing key
-        shell: bash
-        env:
-          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
-          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-          for name in SIGNING_KEYSTORE_BASE64 SIGNING_KEYSTORE_PASSWORD SIGNING_KEY_PASSWORD SIGNING_KEY_ALIAS; do
-            if [[ -z "${!name}" ]]; then
-              echo "::error::Missing GitHub Actions secret: $name. Configure all four signing secrets before publishing; ephemeral signing breaks future APK updates."
-              exit 1
-            fi
-          done
+      - name: Explain test signing
+        run: echo "Building a test APK with an ephemeral debug key because persistent signing secrets are not configured. This APK may not update an installation signed with a different key."
 
       - name: Show version
         id: version
@@ -55,10 +42,7 @@ jobs:
       - name: Build APK
         env:
           NUGET_PACKAGES: ${{ github.workspace }}/.nuget/packages
-          KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
-          KS_PASS: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
-          KEY_PASS: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          ALLOW_EPHEMERAL_DEBUG_SIGNING: "1"
           DEBUGGABLE: "0"
         run: docker compose -f tools/docker/compose.yaml run --rm apk
 
