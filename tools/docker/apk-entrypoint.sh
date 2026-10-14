@@ -68,19 +68,23 @@ dotnet build -c Release tools/bundle-surgery/BundleSurgery.csproj --nologo -v qu
 say "building mod-weaver"
 dotnet build -c Release tools/mod-weaver/ModWeaver.csproj --nologo -v quiet
 
-# A signing key, because a container has none.
-#
-# apksigner needs one and the build fails at the last step without it. On a
-# workstation this file is the one Android Studio generates; here the container
-# is fresh every run, so an equivalent is made with the same conventional alias
-# and passwords. CI overrides KEYSTORE with a real release key, and this is
-# skipped.
-#
-# Note that this key differs between containers, so an APK built here cannot be
-# installed over one built elsewhere without uninstalling first. That is true of
-# any two debug keys and is why releases use a stable key from a secret.
+# Decode the persistent release keystore provided by CI. A release build
+# must never silently fall back to a throwaway debug key: Android would reject
+# the next APK as an update. Local developer builds may still use a debug key.
+if [[ -n "${KEYSTORE_BASE64:-}" ]]; then
+    release_keystore="/tmp/silksong-release.jks"
+    printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$release_keystore"
+    [[ -s "$release_keystore" ]] || { say "ERROR: decoded signing keystore is empty"; exit 1; }
+    export KEYSTORE="$release_keystore"
+fi
+
+if [[ "${DEBUGGABLE:-1}" == "0" && -z "${KEYSTORE:-}" ]]; then
+    say "ERROR: release builds require KEYSTORE_BASE64 from the persistent signing secret"
+    exit 1
+fi
+
 if [[ -z "${KEYSTORE:-}" && ! -f "$HOME/.android/debug.keystore" ]]; then
-    say "generating a debug keystore (none in this container)"
+    say "generating local debug keystore"
     mkdir -p "$HOME/.android"
     keytool -genkeypair -v \
         -keystore "$HOME/.android/debug.keystore" \
