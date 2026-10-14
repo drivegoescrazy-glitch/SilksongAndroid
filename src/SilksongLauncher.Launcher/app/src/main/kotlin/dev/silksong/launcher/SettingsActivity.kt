@@ -36,6 +36,7 @@ class SettingsActivity : Activity() {
     private lateinit var swAutoPull: Switch
     private lateinit var swAutoPush: Switch
     private lateinit var swPerfOverlay: Switch
+    private lateinit var swPerformanceImprovements: Switch
     private lateinit var swSkipIntro: Switch
     private lateinit var swDualScreen: Switch
     private lateinit var swShowTopHud: Switch
@@ -50,6 +51,7 @@ class SettingsActivity : Activity() {
         swAutoPull = findViewById(R.id.sw_auto_pull)
         swAutoPush = findViewById(R.id.sw_auto_push)
         swPerfOverlay = findViewById(R.id.sw_perf_overlay)
+        swPerformanceImprovements = findViewById(R.id.sw_performance_improvements)
         swSkipIntro = findViewById(R.id.sw_skip_intro)
         swDualScreen = findViewById(R.id.sw_dual_screen)
         swShowTopHud = findViewById(R.id.sw_show_top_hud)
@@ -60,6 +62,7 @@ class SettingsActivity : Activity() {
         swAutoPull.isChecked = settings.autoPull
         swAutoPush.isChecked = settings.autoPush
         swPerfOverlay.isChecked = settings.perfOverlay
+        swPerformanceImprovements.isChecked = settings.performanceImprovements
         swSkipIntro.isChecked = settings.skipIntro
         swDualScreen.isChecked = settings.dualScreen
         swShowTopHud.isChecked = settings.showTopHud
@@ -83,6 +86,10 @@ class SettingsActivity : Activity() {
         swPerfOverlay.setOnCheckedChangeListener { _, checked ->
             settings.perfOverlay = checked
             LauncherLog.log("Settings: perf overlay → $checked (takes effect on next game launch)")
+        }
+        swPerformanceImprovements.setOnCheckedChangeListener { _, checked ->
+            settings.performanceImprovements = checked
+            LauncherLog.log("Settings: performance improvements → $checked (takes effect on next game launch)")
         }
         swSkipIntro.setOnCheckedChangeListener { _, checked ->
             settings.skipIntro = checked
