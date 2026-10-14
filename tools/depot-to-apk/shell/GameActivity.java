@@ -212,8 +212,8 @@ public class GameActivity extends PlayerActivity
         String resolved = findLibrary(loader, "il2cpp");
         android.util.Log.i(TAG, "findLibrary(\"il2cpp\") -> " + resolved);
         if (resolved != null && !resolved.startsWith("<unavailable:") &&
-            !new java.io.File(resolved).getCanonicalFile().equals(
-                new java.io.File(dir, "libil2cpp.so").getCanonicalFile()))
+            !new java.io.File(resolved).getAbsolutePath().equals(
+                new java.io.File(dir, "libil2cpp.so").getAbsolutePath()))
         {
             throw new IllegalStateException("class loader resolved IL2CPP to an unexpected library: " + resolved);
         }
