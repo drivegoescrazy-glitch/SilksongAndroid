@@ -65,9 +65,13 @@ class PortBuildService : Service() {
             }
             ACTION_UPDATE -> {
                 title = intent.getStringExtra("title") ?: title
-                percent = intent.getIntExtra("percent", percent).coerceIn(0, 100)
+                // Keep the displayed percentage monotonic if queued updates arrive out of order.
+                percent = maxOf(percent, intent.getIntExtra("percent", percent).coerceIn(0, 100))
                 eta = intent.getStringExtra("eta") ?: eta
-                if (running) manager.notify(NOTIFICATION_ID, notification())
+                // An update can race ACTION_START. Promote here too so a newly
+                // started service always posts its foreground notification promptly.
+                running = true
+                startForeground(NOTIFICATION_ID, notification())
             }
             ACTION_STOP -> {
                 running = false
@@ -84,8 +88,8 @@ class PortBuildService : Service() {
         return builder
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(title)
-            .setContentText("$percent% • $eta")
-            .setStyle(Notification.BigTextStyle().bigText("$percent% complete\n$eta"))
+            .setContentText("$percent% complete • $eta")
+            .setStyle(Notification.BigTextStyle().bigText("$title\n$percent% complete\n$eta"))
             .setProgress(100, percent, false)
             .setOngoing(true)
             .build()
