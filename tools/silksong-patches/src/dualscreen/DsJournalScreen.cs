@@ -240,7 +240,7 @@ public class DsJournalScreen : IDsScreen
 
         _name = DsWidgets.Label(_detail, "name", "", DetailTitleSize,
                                 DsTheme.Ink, TmpAlign.Left);
-        if (_name != null) DsWidgets.Place(_name.rectTransform, 0f, 8f, DetailW, 52f);
+        if (_name != null) DsWidgets.Place(_name.rectTransform, 0f, 8f, DetailW - 72f, 52f);
 
         _desc = DsWidgets.Label(_detail, "desc", "", DetailBodySize,
                                 DsTheme.InkDim, TmpAlign.TopLeft);
@@ -262,6 +262,8 @@ public class DsJournalScreen : IDsScreen
         // of a circle inscribed in its cell, split across the two axes.
         _cursor.CornerInset = _cell * 0.1465f;
         _cursor.Build(_list);
+        // Draw the shortcut above the journal panes and labels.
+        _settingsButton.SetAsLastSibling();
 
         Refresh(force: true);
     }
