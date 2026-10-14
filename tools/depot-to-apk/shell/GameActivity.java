@@ -397,6 +397,25 @@ public class GameActivity extends PlayerActivity
         return info;
     }
 
+    private void verifyAddressablesContent()
+    {
+        java.io.File appData = getFilesDir().getParentFile();
+        if (appData == null)
+            throw new IllegalStateException("could not resolve the app data directory");
+        java.io.File content = new java.io.File(appData, "a");
+        java.io.File catalog = new java.io.File(content, "catalog.bin");
+        java.io.File settings = new java.io.File(content, "settings.json");
+        if (!content.isDirectory() || !catalog.isFile() || catalog.length() == 0 ||
+            !settings.isFile() || settings.length() == 0)
+        {
+            throw new IllegalStateException(
+                "Addressables content link is missing or incomplete: " + content +
+                " (catalog=" + catalog.length() + ", settings=" + settings.length() +
+                "). Rebuild the player and verify the original Linux depot is still available.");
+        }
+        android.util.Log.i(TAG, "Addressables content verified at " + content);
+    }
+
     // The catalog's content root is one length-prefixed string patched in
     // place, so it can only be replaced by something no longer than the token
     // it overwrites -- 56 bytes. That is enough for a path in internal
@@ -939,6 +958,8 @@ public class GameActivity extends PlayerActivity
         stagePackageLayout();
         boot("linkContent");
         linkContent();
+        boot("verifyAddressablesContent");
+        verifyAddressablesContent();
         boot("UnityPlayerActivity.onCreate");
         super.onCreate(savedInstanceState);
         boot("created");
