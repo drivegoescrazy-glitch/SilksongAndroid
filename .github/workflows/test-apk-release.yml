@@ -16,7 +16,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: test-apk-release-${{ github.ref }}
+  group: test-apk-release-package-id-fix-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
