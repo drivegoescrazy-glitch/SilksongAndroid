@@ -137,12 +137,43 @@ class LauncherActivity : Activity() {
         btnLaunch.setOnClickListener { onLaunchClicked() }
 
         showLaunchPanel()
+        // Start the existing port automatically; a one-shot journal settings request takes priority.
+        window.decorView.post { routeStartup() }
+    }
+
+    override fun onPause() {
+        launcherWasPaused = true
+        super.onPause()
     }
 
     override fun onDestroy() {
         LauncherLog.removeListener(logListener)
         uiScope.cancel()
         super.onDestroy()
+    }
+
+    private var startupRouteHandled = false
+    private var launcherWasPaused = false
+
+    private fun consumeSettingsRequest(): Boolean {
+        val marker = getExternalFilesDir(null)?.let { File(it, "open-settings-on-next-launch") }
+        if (marker == null || !marker.isFile) return false
+        runCatching { marker.delete() }
+        LauncherLog.log("Opening general settings from journal shortcut")
+        startActivity(Intent(this, SettingsActivity::class.java))
+        return true
+    }
+
+    private fun routeStartup() {
+        if (startupRouteHandled || isFinishing) return
+        startupRouteHandled = true
+        if (consumeSettingsRequest()) return
+        val ready = runCatching { BuildInstallation.isReady(File(filesDir, "pkg"), buildSignature) }
+            .getOrDefault(false)
+        if (ready) {
+            LauncherLog.log("Existing port detected; starting game automatically")
+            onLaunchClicked()
+        }
     }
 
     // ── State transitions ──────────────────────────────────────────────
@@ -153,6 +184,10 @@ class LauncherActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        val wasPaused = launcherWasPaused
+        launcherWasPaused = false
+        // The marker is intentionally not consumed on the first return from gameplay.
+        if (wasPaused && !returningFromGame && startupRouteHandled && consumeSettingsRequest()) return
         // Auto-push fires after the user returns from playing the
         // game. We use a flag (set in launchGame) instead of just
         // "always on resume" so dismissing dialogs / opening
