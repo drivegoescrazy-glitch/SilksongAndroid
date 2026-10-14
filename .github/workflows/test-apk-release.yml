@@ -4,12 +4,7 @@ on:
   push:
     branches: [master]
     paths:
-      - '.github/workflows/test-apk-release.yml'
-      - 'src/**'
-      - 'tools/**'
-      - 'Makefile'
       - 'VERSION'
-      - 'Directory.Build.props'
   workflow_dispatch:
 
 permissions:
