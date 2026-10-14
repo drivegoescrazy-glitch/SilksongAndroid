@@ -8,6 +8,8 @@
       because JavaSteam doesn't query connectivity, just opens sockets.
     -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!--
       Ending a builder process when a build is cancelled goes down the
@@ -55,6 +57,14 @@
         android:name="dev.silksong.launcher.SilksongApp"
         android:appCategory="game"
         tools:replace="android:name">
+        <service
+            android:name="dev.silksong.launcher.PortBuildService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Long-running on-device game port and native compilation" />
+        </service>
         <meta-data
             android:name="android.game_mode_config"
             android:resource="@xml/game_mode_config" />
