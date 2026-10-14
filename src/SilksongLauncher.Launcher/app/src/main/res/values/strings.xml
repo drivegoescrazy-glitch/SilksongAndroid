@@ -23,13 +23,15 @@
     <string name="action_launch">Launch game</string>
 
     <!-- Settings screen. -->
-    <string name="settings_title">Launcher settings</string>
+    <string name="settings_title">General settings</string>
     <string name="settings_auto_pull">Download cloud saves before launching</string>
     <string name="settings_auto_pull_subtitle">Download newer cloud saves right before the game starts.</string>
     <string name="settings_auto_push">Upload cloud saves after playing</string>
     <string name="settings_auto_push_subtitle">Upload changed local saves when you return from the game.</string>
     <string name="settings_perf_overlay">Show in-game perf overlay</string>
     <string name="settings_perf_overlay_subtitle">Top-right overlay with FPS, CPU and GPU load, RAM, and battery level and drain.</string>
+    <string name="settings_performance_improvements">Performance improvements</string>
+    <string name="settings_performance_improvements_subtitle">Reduce expensive shadows, extra pixel lights and other graphics effects to help frame pacing and reduce dips. Takes effect next game launch; visual quality may be lower.</string>
 
     <string name="settings_skip_intro">Skip intro on startup</string>
     <string name="settings_skip_intro_subtitle">Skip the studio logos and opening quote and go straight to the main menu.</string>
