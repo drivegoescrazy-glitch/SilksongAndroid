@@ -241,9 +241,22 @@ compile_all() {
     srcs=$(find -L "$tree" -name "*.$ext" | sort)
     [ -z "$srcs" ] && return 0
 
-    # One sha256sum call for the whole phase: per-file invocations cost more
-    # than the hashing itself.
-    echo "$srcs" | xargs sha256sum > obj/.now
+    # Hashing the generated tree is real work: it is around 1.5 GB, and
+    # the files live on Android's shared/FUSE-backed storage. A single
+    # sha256sum process reads every file serially, leaving storage bandwidth
+    # unused on devices that can service independent reads concurrently.
+    #
+    # Use a small bounded pool of batched sha256sum processes. Batching avoids
+    # spawning one process per source; sorting afterwards makes the manifest
+    # deterministic even though workers finish in a different order. This
+    # only changes how input hashes are calculated, never compiler flags or
+    # build outputs. HASH_JOBS can be set lower on slow storage.
+    hash_jobs="${HASH_JOBS:-$JOBS}"
+    [ "$hash_jobs" -gt 4 ] && hash_jobs=4
+    [ "$hash_jobs" -lt 1 ] && hash_jobs=1
+    echo "$srcs" | xargs -P "$hash_jobs" -n 16 sha256sum > obj/.now.raw
+    sort -k2,2 obj/.now.raw > obj/.now
+    rm -f obj/.now.raw
     cat obj/.now >> obj/.seen
 
     # Decide what needs doing before doing any of it, so the work can be handed
