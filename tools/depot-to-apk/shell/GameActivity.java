@@ -159,8 +159,30 @@ public class GameActivity extends PlayerActivity
         for (String name : new String[] { "libunity.so", "libmain.so", "libil2cpp.so" })
         {
             java.io.File f = new java.io.File(dir, name);
-            if (!f.isFile() || f.length() == 0)
-                throw new IllegalStateException("required native library is missing or empty: " + f);
+            if (!f.isFile() || f.length() < 64)
+                throw new IllegalStateException("required native library is missing or truncated: " + f);
+            try (java.io.InputStream in = new java.io.FileInputStream(f))
+            {
+                byte[] h = new byte[20];
+                int n = 0;
+                while (n < h.length)
+                {
+                    int read = in.read(h, n, h.length - n);
+                    if (read < 0) break;
+                    n += read;
+                }
+                int machine = (h[18] & 0xff) | ((h[19] & 0xff) << 8);
+                if (n != h.length || h[0] != 0x7f || h[1] != 'E' ||
+                    h[2] != 'L' || h[3] != 'F' || h[4] != 2 || h[5] != 1 ||
+                    machine != 183)
+                {
+                    throw new IllegalStateException("native library is not a valid little-endian ARM64 ELF: " + f);
+                }
+            }
+            catch (java.io.IOException e)
+            {
+                throw new IllegalStateException("could not validate native library: " + f, e);
+            }
         }
     }
 
@@ -211,7 +233,9 @@ public class GameActivity extends PlayerActivity
         // into an unexplained black screen later in UnityPlayerActivity.
         String resolved = findLibrary(loader, "il2cpp");
         android.util.Log.i(TAG, "findLibrary(\"il2cpp\") -> " + resolved);
-        if (resolved != null && !resolved.startsWith("<unavailable:") &&
+        if (resolved == null)
+            throw new IllegalStateException("class loader cannot resolve the compiled IL2CPP library");
+        if (!resolved.startsWith("<unavailable:") &&
             !new java.io.File(resolved).getAbsolutePath().equals(
                 new java.io.File(dir, "libil2cpp.so").getAbsolutePath()))
         {
