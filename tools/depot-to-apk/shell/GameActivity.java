@@ -246,6 +246,34 @@ public class GameActivity extends PlayerActivity
     // layout Android installs -- <dir>/base.apk beside <dir>/lib/<abi>/ --
     // through a symlink, which is the arrangement that works while the data
     // is still inside it.
+    private void verifyDataImage(java.io.File data) throws java.io.IOException
+    {
+        if (!data.isFile() || data.length() == 0)
+            throw new java.io.IOException("player data image is missing or empty: " + data);
+        java.util.zip.ZipFile zip = new java.util.zip.ZipFile(data);
+        try
+        {
+            String[] required = new String[] {
+                "assets/bin/Data/globalgamemanagers",
+                "assets/bin/Data/globalgamemanagers.assets",
+                "assets/bin/Data/resources.assets",
+                "assets/bin/Data/Managed/Metadata/global-metadata.dat",
+                "assets/aa/catalog.bin",
+                "assets/aa/settings.json"
+            };
+            for (String name : required)
+            {
+                java.util.zip.ZipEntry entry = zip.getEntry(name);
+                if (entry == null || entry.getSize() <= 0)
+                    throw new java.io.IOException("player data image is missing/empty entry " + name);
+            }
+        }
+        finally
+        {
+            zip.close();
+        }
+    }
+
     private void stagePackageLayout()
     {
         java.io.File libDir = externalLibDir();
@@ -259,6 +287,7 @@ public class GameActivity extends PlayerActivity
 
             if (data.isFile())
             {
+                verifyDataImage(data);
                 // The framework keeps using the real APK for dex and
                 // resources: those come from LoadedApk and the AssetManager,
                 // which were both set up before this runs. Only the engine's
@@ -279,12 +308,7 @@ public class GameActivity extends PlayerActivity
             }
             else
             {
-                // Os.symlink rather than shelling out to ln: it reports failure.
-                // exists() follows the link, so a stale one reads as absent and
-                // then fails EEXIST -- and it is stale after every reinstall,
-                // because the APK path changes. Replace it rather than test it.
-                apkLink.delete();
-                android.system.Os.symlink(app.sourceDir, apkLink.getAbsolutePath());
+                throw new java.io.IOException("neither a built player data image nor a Unity OBB is available");
             }
             if (!apkLink.exists())
                 throw new java.io.IOException("apk symlink not created at " + apkLink);
