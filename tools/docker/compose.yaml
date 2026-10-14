@@ -59,7 +59,7 @@ services:
       # Skip the Gradle build when only shell/ or build.sh changed.
       LAUNCHER: "${LAUNCHER:-1}"
       # Release signing is supplied by GitHub Actions secrets. Never bake a
-      # private keystore into the public repository or image.
+      # private keystore into the public repository or image. Stable key required.
       KEYSTORE_BASE64: "${KEYSTORE_BASE64:-}"
       KS_PASS: "${KS_PASS:-}"
       KEY_PASS: "${KEY_PASS:-}"
