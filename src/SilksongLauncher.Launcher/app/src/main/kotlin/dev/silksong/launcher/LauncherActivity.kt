@@ -128,10 +128,12 @@ class LauncherActivity : Activity() {
         btnPull.setOnClickListener { onPullClicked() }
         btnPush.setOnClickListener { onPushClicked() }
         btnMods.setOnClickListener {
+            suppressAutoLaunchOnResume = true
             startActivity(Intent(this, ModsActivity::class.java))
         }
         btnSettings.setOnClickListener { onSettingsClicked() }
         btnLogs.setOnClickListener {
+            suppressAutoLaunchOnResume = true
             startActivity(Intent(this, LogActivity::class.java))
         }
         btnLaunch.setOnClickListener { onLaunchClicked() }
@@ -154,12 +156,14 @@ class LauncherActivity : Activity() {
 
     private var startupRouteHandled = false
     private var launcherWasPaused = false
+    private var suppressAutoLaunchOnResume = false
 
     private fun consumeSettingsRequest(): Boolean {
         val marker = getExternalFilesDir(null)?.let { File(it, "open-settings-on-next-launch") }
         if (marker == null || !marker.isFile) return false
         runCatching { marker.delete() }
         LauncherLog.log("Opening general settings from journal shortcut")
+        suppressAutoLaunchOnResume = true
         startActivity(Intent(this, SettingsActivity::class.java))
         return true
     }
@@ -168,11 +172,20 @@ class LauncherActivity : Activity() {
         if (startupRouteHandled || isFinishing) return
         startupRouteHandled = true
         if (consumeSettingsRequest()) return
-        val ready = runCatching { BuildInstallation.isReady(File(filesDir, "pkg"), buildSignature) }
-            .getOrDefault(false)
+        val pkg = File(filesDir, "pkg")
+        val ready = runCatching { BuildInstallation.isReady(pkg, buildSignature) }.getOrDefault(false)
         if (ready) {
             LauncherLog.log("Existing port detected; starting game automatically")
             onLaunchClicked()
+        } else if (File(pkg, "data.apk").isFile &&
+                   File(pkg, "lib/arm64/libil2cpp.so").isFile) {
+            // A source/patch change invalidates the build stamp. Rebuild from
+            // the existing depot and cached outputs instead of leaving the
+            // user at a launcher that looks like it did nothing.
+            LauncherLog.log("Existing port needs updating; starting incremental rebuild")
+            startActivity(Intent(this, SetupActivity::class.java)
+                .putExtra(SetupActivity.EXTRA_REBUILD, true))
+            finish()
         }
     }
 
@@ -187,7 +200,20 @@ class LauncherActivity : Activity() {
         val wasPaused = launcherWasPaused
         launcherWasPaused = false
         // The marker is intentionally not consumed on the first return from gameplay.
-        if (wasPaused && !returningFromGame && startupRouteHandled && consumeSettingsRequest()) return
+        if (wasPaused && !returningFromGame && startupRouteHandled) {
+            if (consumeSettingsRequest()) return
+            if (suppressAutoLaunchOnResume) {
+                suppressAutoLaunchOnResume = false
+                return
+            }
+            val pkg = File(filesDir, "pkg")
+            val ready = runCatching { BuildInstallation.isReady(pkg, buildSignature) }.getOrDefault(false)
+            if (ready) {
+                LauncherLog.log("Launcher reopened; starting game automatically")
+                onLaunchClicked()
+                return
+            }
+        }
         // Auto-push fires after the user returns from playing the
         // game. We use a flag (set in launchGame) instead of just
         // "always on resume" so dismissing dialogs / opening
@@ -210,6 +236,7 @@ class LauncherActivity : Activity() {
             return
         }
         @Suppress("DEPRECATION")
+        suppressAutoLaunchOnResume = true
         startActivityForResult(Intent(this, LoginActivity::class.java), REQ_LOGIN)
     }
 
@@ -459,6 +486,7 @@ class LauncherActivity : Activity() {
     // ── Settings ───────────────────────────────────────────────────────
 
     private fun onSettingsClicked() {
+        suppressAutoLaunchOnResume = true
         startActivity(Intent(this, SettingsActivity::class.java))
     }
 
