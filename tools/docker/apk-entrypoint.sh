@@ -79,8 +79,12 @@ if [[ -n "${KEYSTORE_BASE64:-}" ]]; then
 fi
 
 if [[ "${DEBUGGABLE:-1}" == "0" && -z "${KEYSTORE:-}" ]]; then
-    say "ERROR: release builds require KEYSTORE_BASE64 from the persistent signing secret"
-    exit 1
+    if [[ "${ALLOW_EPHEMERAL_DEBUG_SIGNING:-0}" == "1" ]]; then
+        say "WARNING: using an ephemeral debug signing key for this CI test build; future APKs may not install as updates"
+    else
+        say "ERROR: non-debuggable builds require a persistent signing keystore, or explicitly set ALLOW_EPHEMERAL_DEBUG_SIGNING=1 for a test build"
+        exit 1
+    fi
 fi
 
 if [[ -z "${KEYSTORE:-}" && ! -f "$HOME/.android/debug.keystore" ]]; then
