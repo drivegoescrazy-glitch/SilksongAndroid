@@ -125,6 +125,7 @@ public class DsJournalScreen : IDsScreen
     readonly DsCursor _cursor = new DsCursor();
 
     RectTransform _host, _list, _portraitBox, _detail;
+    RectTransform _settingsButton;
     /// <summary>The rule between the description and the hunter's notes.</summary>
     RectTransform _ruleRoot;
     Image _portrait, _glow;
@@ -164,6 +165,15 @@ public class DsJournalScreen : IDsScreen
 
         var layout = DsLayout.Current;
         float bodyH = layout.Body.height;
+
+        // Small shortcut at the upper-right of the lower display.
+        // It requests the launcher's general settings on the next app open.
+        _settingsButton = DsWidgets.Panel(host, "general-settings-button",
+            new Color(0.10f, 0.10f, 0.10f, 0.96f), DsTheme.Rule, 2f);
+        DsWidgets.Place(_settingsButton, layout.Body.width - 72f, 4f, 60f, 42f);
+        var settingsLabel = DsWidgets.Label(_settingsButton, "label", "SET", 17f,
+                                            DsTheme.Ink, TmpAlign.Center, display: true);
+        if (settingsLabel != null) DsWidgets.Stretch(settingsLabel.rectTransform);
 
         _listTop = 16f;
         _listH = bodyH - _listTop - 16f;
@@ -759,6 +769,13 @@ public class DsJournalScreen : IDsScreen
         switch (g.Type)
         {
             case DsGestureType.Tap:
+                var body = DsLayout.Current.Body;
+                if (_settingsButton != null &&
+                    new Rect(body.x + body.width - 72f, body.y + 4f, 60f, 42f).Contains(p))
+                {
+                    RequestGeneralSettings();
+                    break;
+                }
                 int hit = HitTest(p);
                 if (hit >= 0)
                 {
@@ -779,6 +796,21 @@ public class DsJournalScreen : IDsScreen
                     Paint();
                 }
                 break;
+        }
+    }
+
+    static void RequestGeneralSettings()
+    {
+        try
+        {
+            string path = System.IO.Path.Combine(Application.persistentDataPath,
+                                                 "open-settings-on-next-launch");
+            System.IO.File.WriteAllText(path, "1");
+            Debug.Log("[DsJournal] general settings requested for next app open");
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[DsJournal] could not request general settings: " + e.Message);
         }
     }
 
