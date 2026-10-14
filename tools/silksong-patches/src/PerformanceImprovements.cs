@@ -1,4 +1,4 @@
-// Optional lower-cost quality profile intended to reduce GPU-bound frame-time spikes.
+// Optional low-cost profile intended to reduce GPU-bound frame-time spikes.
 // The setting is exported by the launcher and read once at game startup.
 #if UNITY_ANDROID && !UNITY_EDITOR
 using UnityEngine;
@@ -32,29 +32,31 @@ public sealed class PerformanceImprovements : MonoBehaviour
         if (_instance == this) _instance = null;
     }
 
-    void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-    {
-        Apply();
-    }
+    void OnSceneLoaded(Scene scene, LoadSceneMode mode) => Apply();
 
     static void Apply()
     {
         try
         {
-            // Avoid costly soft-shadow filtering and keep shadow-map work bounded.
+            // Bound expensive shadow-map and filtering work.
             QualitySettings.shadows = ShadowQuality.HardOnly;
             QualitySettings.shadowResolution = ShadowResolution.Low;
-            QualitySettings.shadowDistance = Mathf.Min(QualitySettings.shadowDistance, 18f);
+            QualitySettings.shadowDistance = Mathf.Min(QualitySettings.shadowDistance, 12f);
             QualitySettings.shadowCascades = 1;
 
-            // These effects can add GPU passes or extra lighting work without
-            // changing game logic, input, physics, or save behaviour.
+            // Reduce additional lighting, particle, reflection and AA passes.
             QualitySettings.softParticles = false;
             QualitySettings.realtimeReflectionProbes = false;
-            QualitySettings.pixelLightCount = Mathf.Min(QualitySettings.pixelLightCount, 1);
+            QualitySettings.pixelLightCount = 0;
             QualitySettings.antiAliasing = 0;
 
-            Debug.Log("[PerformanceImprovements] lower-cost quality profile enabled");
+            // Prefer cheaper geometry LODs and avoid a VSync wait.
+            QualitySettings.lodBias = Mathf.Min(QualitySettings.lodBias, 0.8f);
+            QualitySettings.maximumLODLevel = Mathf.Max(QualitySettings.maximumLODLevel, 1);
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = 60;
+
+            Debug.Log("[PerformanceImprovements] low-cost 60 FPS profile enabled");
         }
         catch (System.Exception e)
         {
