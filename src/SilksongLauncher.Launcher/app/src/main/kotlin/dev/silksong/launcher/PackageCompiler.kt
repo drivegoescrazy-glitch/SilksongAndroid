@@ -533,7 +533,7 @@ object PackageCompiler {
         val out = File(outputDir(root), ASSEMBLY)
         out.parentFile.mkdirs()
 
-        val fingerprint = buildFingerprint(cs.map(::File) + refs, defines().joinToString(";"))
+        val fingerprint = buildFingerprint(cs.map { File(it) } + refs, defines().joinToString(";"))
         val stamp = File(root, "inputsystem.build-fingerprint")
         if (out.isFile && out.length() > 0 && stamp.isFile &&
             stamp.readText().trim() == fingerprint
