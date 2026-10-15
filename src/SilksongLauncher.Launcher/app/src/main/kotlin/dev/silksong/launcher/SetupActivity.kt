@@ -578,7 +578,13 @@ class SetupActivity : Activity() {
             label.contains("player image") || label.contains("packing") || label.contains("addressables") -> 0.91f to 0.98f
             label.contains("retarget") || label.contains("content") || label.contains("installing") ||
                 label.contains("finishing") -> 0.98f to 0.995f
-            stepTitle.contains("Building", ignoreCase = true) -> 0.40f to 0.995f
+            // Managed assemblies, patches, shims and Roslyn setup are short
+            // preparation work before conversion. Previously any completed
+            // event in this phase could jump the bar from 40% to 99.5%.
+            label.contains("patch") || label.contains("save fix") ||
+                label.contains("mod loader") || label.contains("input system") ||
+                label.contains("roslyn") || label.contains("package") ||
+                stepTitle.contains("Building", ignoreCase = true) -> 0.40f to 0.43f
             else -> {
                 val denominator = stepCount.coerceAtLeast(1).toFloat()
                 val base = (stepNumber - 1).coerceAtLeast(0) / denominator
