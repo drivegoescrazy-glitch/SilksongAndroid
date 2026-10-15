@@ -1,10 +1,7 @@
-// ShaderWarmup — avoids overlapping scene warmups and duplicate work during
-// rapid scene transitions. Shader.WarmupAllShaders is synchronous, so queueing
-// multiple coroutines can turn a transition into a long CPU spike.
-//
-// Warmup is still performed after each stable scene load so newly loaded shader
-// variants can be prepared. If another scene loads before the deferred warmup
-// starts, the stale request is cancelled instead of doing redundant work.
+// ShaderWarmup — one global warmup per app session, and never overlap queued
+// warmups during rapid scene transitions. WarmupAllShaders is synchronous and
+// can cause a CPU spike; repeating it for every scene adds cost without helping
+// variants that have already been prepared.
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using System.Collections;
@@ -15,6 +12,7 @@ using UnityEngine.SceneManagement;
 public class ShaderWarmup : MonoBehaviour
 {
     static int s_sceneGeneration;
+    static bool s_warmupCompleted;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     static void Bootstrap()
@@ -22,7 +20,7 @@ public class ShaderWarmup : MonoBehaviour
         var go = new GameObject("__ShaderWarmup__");
         DontDestroyOnLoad(go);
         go.AddComponent<ShaderWarmup>();
-        Debug.Log("[ShaderWarmup] registered");
+        Debug.Log("[ShaderWarmup] registered (single warmup per session)");
     }
 
     void OnEnable() => SceneManager.sceneLoaded += OnSceneLoaded;
@@ -30,19 +28,24 @@ public class ShaderWarmup : MonoBehaviour
 
     void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
+        if (s_warmupCompleted) return;
+
         int generation = ++s_sceneGeneration;
         StartCoroutine(WarmAfterFrame(scene.name, generation));
     }
 
     static IEnumerator WarmAfterFrame(string sceneName, int generation)
     {
-        // Let scene renderers and addressable bundles initialise first.
+        // Give scene activation and initial asset setup a frame to settle.
         yield return null;
 
-        // A newer scene arrived while we were waiting. Don't run an expensive
-        // global warmup for a scene that is no longer active.
-        if (generation != s_sceneGeneration)
+        // Skip stale requests and avoid repeating the global CPU-heavy pass.
+        if (generation != s_sceneGeneration || s_warmupCompleted)
             yield break;
+
+        // Set before calling the synchronous API so no later scene callback
+        // can schedule a second warmup in this session.
+        s_warmupCompleted = true;
 
         var sw = Stopwatch.StartNew();
         Shader.WarmupAllShaders();
