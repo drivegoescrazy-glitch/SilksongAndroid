@@ -45,6 +45,19 @@ object PackageCompiler {
 
     private const val ASSEMBLY = "Unity.InputSystem.dll"
 
+    // Avoid recompiling the large Input System assembly on every launch/port.
+    // The stamp includes every selected source and reference file's path,
+    // size and modification time, so changed game/toolchain inputs invalidate it.
+    private fun buildFingerprint(files: List<File>, extra: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(extra.toByteArray(Charsets.UTF_8))
+        for (file in files.sortedBy { it.absolutePath }) {
+            val record = "${file.absolutePath}\u0000${file.length()}\u0000${file.lastModified()}\n"
+            digest.update(record.toByteArray(Charsets.UTF_8))
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     // ── Roslyn ─────────────────────────────────────────────────────────────
 
     private const val ROSLYN_VERSION = "4.12.0"
@@ -520,6 +533,16 @@ object PackageCompiler {
         val out = File(outputDir(root), ASSEMBLY)
         out.parentFile.mkdirs()
 
+        val fingerprint = buildFingerprint(cs.map(::File) + refs, defines().joinToString(";"))
+        val stamp = File(root, "inputsystem.build-fingerprint")
+        if (out.isFile && out.length() > 0 && stamp.isFile &&
+            stamp.readText().trim() == fingerprint
+        ) {
+            LauncherLog.log("Unity.InputSystem.dll: reusing cached build (${out.length()} bytes)")
+            send(Progress("Input System ready (cached)", 1f, "${out.length() / 1024} KB"))
+            return@channelFlow
+        }
+
         send(Progress("Compiling the Input System", -1f, "${cs.size} sources"))
 
         // The argument list is thousands of paths long, so it goes in a
@@ -569,6 +592,7 @@ object PackageCompiler {
                     (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
             )
         }
+        stamp.writeText(fingerprint)
         LauncherLog.log("Unity.InputSystem.dll: ${out.length()} bytes from ${cs.size} sources")
         send(Progress("Input System ready", 1f, "${out.length() / 1024} KB"))
     }.flowOn(Dispatchers.IO)
