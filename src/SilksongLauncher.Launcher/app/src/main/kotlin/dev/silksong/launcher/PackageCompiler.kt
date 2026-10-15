@@ -591,8 +591,16 @@ object PackageCompiler {
         LauncherLog.log("Input System: ${cs.size} sources, ${nested.size} nested assemblies excluded")
 
         val refs = references(unity, depot)
+        val missingReferences = refs.filterNot { it.isFile }
+        if (missingReferences.isNotEmpty()) {
+            throw IOException("Input System compiler references are missing: " +
+                missingReferences.take(8).joinToString { it.absolutePath })
+        }
+        if (refs.isEmpty()) throw IOException("no Input System compiler references were found")
         val out = File(outputDir(root), ASSEMBLY)
         out.parentFile.mkdirs()
+        // Do not let an old DLL make a failed or interrupted rebuild look valid.
+        out.delete()
 
         send(Progress("Compiling the Input System", -1f, "${cs.size} sources"))
 
