@@ -126,6 +126,8 @@ CXXFLAGS="-march=armv8-a $OPT -fPIC -fexceptions -fno-rtti -funwind-tables \
 
 rm -f err.log; : > err.log
 mkdir -p obj
+# Never trust a previous phase's readiness marker after an interrupted run.
+rm -f obj/.phase-ready obj/.phase-ready.tmp
 
 # ── incremental build ────────────────────────────────────────────────────────
 #
@@ -254,6 +256,9 @@ compile_all() {
     # Hashing is storage/CPU work, not a compiler working set, so it can
     # use more workers than the memory-capped compiler pool. Keep it bounded
     # to avoid flooding slower shared-storage devices; HASH_JOBS can lower it.
+    # The marker stays absent while hashes are being checked; otherwise the
+    # progress UI could count old objects before discovering they are stale.
+    rm -f obj/.phase-ready obj/.phase-ready.tmp
     hash_jobs="${HASH_JOBS:-$JOBS}"
     [ "$hash_jobs" -gt 8 ] && hash_jobs=8
     [ "$hash_jobs" -lt 1 ] && hash_jobs=1
@@ -293,6 +298,21 @@ compile_all() {
             rm -f obj/.todo.sorted
         fi
 
+        # Remove stale objects before the progress ticker counts this phase.
+        # A changed source must not be credited as finished just because its
+        # previous object's file still exists while the new compile runs.
+        while read -r f; do
+            rm -f "$(obj_name "$prefix" "$f" "$tree")"
+        done < obj/.todo
+    fi
+
+    # At this point every existing object in this phase has been verified
+    # against the source manifest, and stale objects have been removed.
+    # The UI can now count object files as genuinely complete work.
+    printf '%s' "$prefix" > obj/.phase-ready.tmp
+    mv obj/.phase-ready.tmp obj/.phase-ready
+
+    if [ "$built" -gt 0 ]; then
         # A refilling pool, not batches. The previous form launched $JOBS
         # compiles and then called bare `wait`, which blocks until the WHOLE
         # batch is done -- so each batch cost as much as its slowest member and
