@@ -60,11 +60,17 @@ object PackageCompiler {
      * copy of everything, and localized resources for a dozen languages --
      * none of which a C# compile touches. Taking five files makes it 9.6 MB.
      */
-    private val ROSLYN_FILES = listOf(
+    // csc.deps.json names additional runtime dependencies (including
+    // System.Collections.Immutable and System.Reflection.Metadata). Shipping
+    // only csc.dll and the two CodeAnalysis assemblies is not a complete
+    // Roslyn deployment: the host can fail before csc prints anything.
+    private val ROSLYN_REQUIRED_FILES = listOf(
         "csc.dll", "csc.deps.json", "csc.runtimeconfig.json",
         "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
+        "System.Collections.Immutable.dll", "System.Reflection.Metadata.dll",
     )
     private const val ROSLYN_PREFIX = "tasks/netcore/bincore/"
+    private const val ROSLYN_MARKER = ".complete"
 
     private fun roslynDir(root: File) = File(root, "roslyn")
 
@@ -79,8 +85,13 @@ object PackageCompiler {
     private suspend fun stageRoslyn(root: File, onProgress: (Long, Long) -> Unit): File {
         val dir = roslynDir(root)
         val csc = File(dir, "csc.dll")
-        if (ROSLYN_FILES.all { File(dir, it).length() > 0 }) return csc
+        val marker = File(dir, ROSLYN_MARKER)
+        if (marker.isFile && ROSLYN_REQUIRED_FILES.all { File(dir, it).length() > 0 }) return csc
 
+        // A previous version staged just five files and considered that a
+        // complete compiler. Clear that incomplete cache so existing installs
+        // repair themselves without requiring the user to clear app data.
+        dir.deleteRecursively()
         dir.mkdirs()
         var seen = 0L
         ToolchainFetcher.open(ROSLYN_URL).use { raw ->
@@ -88,17 +99,27 @@ object PackageCompiler {
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     val name = entry.name
-                    if (!name.startsWith(ROSLYN_PREFIX)) continue
-                    val leaf = name.removePrefix(ROSLYN_PREFIX)
-                    if (leaf !in ROSLYN_FILES) continue
-                    File(dir, leaf).outputStream().use { out -> zip.copyTo(out, 1 shl 16) }
-                    seen += File(dir, leaf).length()
-                    onProgress(seen, 9_617_787L)
+                    if (!name.startsWith(ROSLYN_PREFIX) || entry.isDirectory) continue
+                    val relative = name.removePrefix(ROSLYN_PREFIX)
+                    if (relative.isBlank() || relative.startsWith("../") || relative.contains("/../")) continue
+                    val destination = File(dir, relative)
+                    if (!destination.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
+                        throw IOException("invalid Roslyn package path: $name")
+                    }
+                    destination.parentFile?.mkdirs()
+                    destination.outputStream().use { out -> zip.copyTo(out, 1 shl 16) }
+                    seen += destination.length()
+                    onProgress(seen.coerceAtMost(ROSLYN_BYTES), ROSLYN_BYTES)
                 }
             }
         }
-        val missing = ROSLYN_FILES.filter { File(dir, it).length() <= 0 }
-        if (missing.isNotEmpty()) throw IOException("Roslyn is incomplete: $missing")
+        val missing = ROSLYN_REQUIRED_FILES.filter { File(dir, it).length() <= 0 }
+        if (missing.isNotEmpty()) {
+            dir.deleteRecursively()
+            throw IOException("Roslyn package is incomplete; missing: $missing")
+        }
+        // Mark complete only after all required files have been checked.
+        marker.writeText("Roslyn $ROSLYN_VERSION staged with dependencies")
         return csc
     }
 
