@@ -149,7 +149,34 @@ object PackageCompiler {
 
         val out = patchAssembly(root)
         out.parentFile.mkdirs()
+        // Never let a previous attempt's partial DLL make a failed compile
+        // look successful.
+        out.delete()
         val references = patchReferences(unity, depot)
+        val missingReferences = references.filterNot { it.isFile || it.isDirectory }
+        if (missingReferences.isNotEmpty()) {
+            throw IOException("patch compiler references are missing: " +
+                missingReferences.take(5).joinToString { it.absolutePath })
+        }
+
+        // Verify that the managed compiler can start independently of the
+        // much larger patch invocation. This separates runtime/host failures
+        // from compiler argument or source failures in the device log.
+        val probe = MonoRuntime.exec(context, csc, listOf("-version"), cwd = root) { line ->
+            val t = line.trimEnd()
+            if (t.isNotEmpty()) LauncherLog.log("patch csc probe: $t")
+        }
+        LauncherLog.log(
+            "patch csc probe: exit=${probe.code} ok=${probe.ok} " +
+                "output=${probe.output.length}B",
+        )
+        if (!probe.ok || probe.output.isBlank()) {
+            throw IOException(
+                "Roslyn could not start (exit ${probe.code}): " +
+                    probe.output.trim().takeLast(300).ifBlank { "no output from csc -version" },
+            )
+        }
+
         val compilerArgs = buildList {
             add("-target:library")
             add("-out:${out.absolutePath}")
@@ -159,15 +186,17 @@ object PackageCompiler {
             add("-langversion:9.0")
             add("-deterministic+")
             add("-nowarn:0169,0414,0649")
-            add("-define:UNITY_ANDROID;ENABLE_INPUT_SYSTEM")
-            // Pass each path as its own argument: no quoting or response-file
-            // parser is involved, including when a user depot path has spaces.
+            // Roslyn accepts comma-separated preprocessor symbols; this avoids
+            // a semicolon being interpreted inconsistently by argument bridges.
+            add("-define:UNITY_ANDROID,ENABLE_INPUT_SYSTEM")
             for (r in references) add("-reference:${r.absolutePath}")
             addAll(cs)
         }
         LauncherLog.log(
             "patch compile: ${cs.size} source(s), " +
-                "${references.size} reference(s), args=${compilerArgs.size}",
+                "${references.size} reference(s), args=${compilerArgs.size}, " +
+                "argChars=${compilerArgs.sumOf { it.length }}, " +
+                "missingSources=${cs.count { !File(it).isFile }}",
         )
         val result = MonoRuntime.exec(
             context,
