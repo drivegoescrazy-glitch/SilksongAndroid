@@ -572,12 +572,14 @@ class SetupActivity : Activity() {
             label.contains("downloading game") || label.contains("depot") -> 0.00f to 0.22f
             stepTitle.contains("supporting tools", ignoreCase = true) || label.contains("unity") ||
                 label.contains("toolchain") || (label.contains("runtime") && !label.contains("engine runtime")) -> 0.22f to 0.40f
-            label.contains("converting") || label.contains("il2cpp conversion") -> 0.43f to 0.54f
+            label.contains("converting") || label.contains("il2cpp conversion") ||
+                label.contains("patching the game") || label.contains("weaving mods") ||
+                label.contains("preparing the converter") -> 0.43f to 0.54f
             label.contains("compiling the game") || label.contains("compiling the engine") ||
-                label.contains("linking the engine") -> 0.54f to 0.91f
+                label.contains("linking the engine") || label.contains("installing the engine") ||
+                label.contains("compiled") -> 0.54f to 0.91f
             label.contains("player image") || label.contains("packing") || label.contains("addressables") -> 0.91f to 0.98f
-            label.contains("retarget") || label.contains("content") || label.contains("installing") ||
-                label.contains("finishing") -> 0.98f to 0.995f
+            label.contains("retarget") || label.contains("content") || label.contains("finishing") -> 0.98f to 0.995f
             // Managed assemblies, patches, shims and Roslyn setup are short
             // preparation work before conversion. Previously any completed
             // event in this phase could jump the bar from 40% to 99.5%.
