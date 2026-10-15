@@ -149,32 +149,30 @@ object PackageCompiler {
 
         val out = patchAssembly(root)
         out.parentFile.mkdirs()
-        val rsp = File(root, "patches.rsp")
-        rsp.printWriter().use { w ->
-            w.println("-target:library")
-            w.println("-out:\"${out.absolutePath}\"")
-            w.println("-optimize+")
-            w.println("-nostdlib+")
-            w.println("-noconfig")
-            w.println("-langversion:9.0")
-            w.println("-deterministic+")
-            w.println("-nowarn:0169,0414,0649")
-            w.println("-define:UNITY_ANDROID;ENABLE_INPUT_SYSTEM")
-            // Everything: the class library, the Android engine, and the
-            // depot's own assemblies. The last of those is what a prebuilt
-            // DLL could never have had.
-            for (r in patchReferences(unity, depot)) w.println("-reference:\"${r.absolutePath}\"")
-            for (f in cs) w.println("\"$f\"")
+        val references = patchReferences(unity, depot)
+        val compilerArgs = buildList {
+            add("-target:library")
+            add("-out:${out.absolutePath}")
+            add("-optimize+")
+            add("-nostdlib+")
+            add("-noconfig")
+            add("-langversion:9.0")
+            add("-deterministic+")
+            add("-nowarn:0169,0414,0649")
+            add("-define:UNITY_ANDROID;ENABLE_INPUT_SYSTEM")
+            // Pass each path as its own argument: no quoting or response-file
+            // parser is involved, including when a user depot path has spaces.
+            for (r in references) add("-reference:${r.absolutePath}")
+            addAll(cs)
         }
-
         LauncherLog.log(
             "patch compile: ${cs.size} source(s), " +
-                "${patchReferences(unity, depot).size} reference(s), response=${rsp.length()}B",
+                "${references.size} reference(s), args=${compilerArgs.size}",
         )
         val result = MonoRuntime.exec(
             context,
             csc,
-            listOf("@${rsp.absolutePath}"),
+            compilerArgs,
             cwd = root,
         ) { line ->
             val t = line.trimEnd()
