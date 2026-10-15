@@ -97,7 +97,7 @@ export ANDROID_SDK AP JDK
 export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK}"
 
 export STEPS="${STEPS:-5,6}"
-PKG="${PKG:-com.drivegoescrazy.silksongandroid.blackfix}"
+PKG="${PKG:-com.drivegoescrazy.silksongandroid.fixedstutters}"
 # The Makefile exports this, but the script has to stand on its own: under
 # `set -u` an unset APK_DIR aborts AFTER the APK is built, throwing away a
 # two-minute build over a variable. Same default as the Makefile.
