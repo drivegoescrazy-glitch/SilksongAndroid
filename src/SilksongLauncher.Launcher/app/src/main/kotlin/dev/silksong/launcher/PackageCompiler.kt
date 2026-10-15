@@ -174,7 +174,10 @@ object PackageCompiler {
         // look successful.
         out.delete()
         val references = patchReferences(unity, depot)
-        val missingReferences = references.filterNot { it.isFile || it.isDirectory }
+        if (references.isEmpty()) {
+            throw IOException("no Unity or game assemblies were found for patch compilation")
+        }
+        val missingReferences = references.filterNot { it.isFile }
         if (missingReferences.isNotEmpty()) {
             throw IOException("patch compiler references are missing: " +
                 missingReferences.take(5).joinToString { it.absolutePath })
@@ -299,6 +302,9 @@ object PackageCompiler {
         out.parentFile.mkdirs()
         out.delete()
         val references = ioReferences(unity, depot)
+        if (references.isEmpty()) {
+            throw IOException("no Unity class-library references were found for SafeIo compilation")
+        }
         val missingReferences = references.filterNot { it.isFile }
         if (missingReferences.isNotEmpty()) {
             throw IOException("SafeIo compiler references are missing: " +
@@ -417,6 +423,9 @@ object PackageCompiler {
         copyAssets(assets, SHIM_ASSETS, src)
 
         val refs = patchReferences(unity, depot)
+        if (refs.isEmpty()) {
+            throw IOException("no Unity or game assemblies were found for mod-loader compilation")
+        }
         for ((assembly, folder) in SHIMS) {
             val dir = File(src, folder)
             val cs = dir.walkTopDown()
