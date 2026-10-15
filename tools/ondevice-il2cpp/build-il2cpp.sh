@@ -259,7 +259,7 @@ compile_all() {
     # The marker stays absent while hashes are being checked; otherwise the
     # progress UI could count old objects before discovering they are stale.
     rm -f obj/.phase-ready obj/.phase-ready.tmp
-    hash_jobs="${HASH_JOBS:-$JOBS}"
+    # Hashing is storage/IO-bound, not a compiler working set. Use the bounded\n# eight-worker pool even when memory pressure limits clang to one or two\n# processes; HASH_JOBS can be lowered on slow or thermally constrained storage.\nhash_jobs="${HASH_JOBS:-8}"
     [ "$hash_jobs" -gt 8 ] && hash_jobs=8
     [ "$hash_jobs" -lt 1 ] && hash_jobs=1
     echo "$srcs" | xargs -P "$hash_jobs" -n 16 sha256sum > obj/.now.raw
