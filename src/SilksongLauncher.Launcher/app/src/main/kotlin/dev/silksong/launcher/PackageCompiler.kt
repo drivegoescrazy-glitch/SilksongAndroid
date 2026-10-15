@@ -167,17 +167,30 @@ object PackageCompiler {
             for (f in cs) w.println("\"$f\"")
         }
 
+        LauncherLog.log(
+            "patch compile: ${cs.size} source(s), " +
+                "${patchReferences(unity, depot).size} reference(s), response=${rsp.length()}B",
+        )
         val result = MonoRuntime.exec(
             context,
             csc,
             listOf("@${rsp.absolutePath}"),
             cwd = root,
+        ) { line ->
+            val t = line.trimEnd()
+            if (t.isNotEmpty()) LauncherLog.log("patch csc: $t")
+        }
+        LauncherLog.log(
+            "patch compile: exit=${result.code} ok=${result.ok} " +
+                "output=${result.output.length}B dll=${out.length()}B",
         )
         if (!result.ok || out.length() <= 0) {
-            val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
+            val lines = result.output.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+            val errors = lines.filter { it.contains("error CS") }
+            val detail = errors.firstOrNull()
+                ?: lines.takeLast(4).joinToString(" | ").ifBlank { "exit ${result.code}; no compiler output" }
             throw IOException(
-                "the patches did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
+                "the patches did not compile (${errors.size} errors): ${detail.take(400)}",
             )
         }
         LauncherLog.log("SilksongPatches.dll: ${out.length()} bytes from ${cs.size} sources")
