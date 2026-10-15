@@ -113,15 +113,17 @@ object NativeBuild {
             val ticker = launch(Dispatchers.IO) {
                 var last = -1
                 while (isActive) {
-                    val p = prefix.get()
+                    val currentPrefix = prefix.get()
+                    val readyPrefix = runCatching { File(objDir, ".phase-ready").readText().trim() }.getOrNull()
+                    // The shell writes this only after hashing every source and
+                    // removing stale objects. Until then, don't count old .o
+                    // files as finished work for the phase currently starting.
+                    val p = currentPrefix?.takeIf { it == readyPrefix }
                     val n = if (p == null) 0
                     else objDir.list()?.count { it.startsWith(p) && it.endsWith(".o") } ?: 0
                     if (n != last) {
                         last = n
                         val t = total.get()
-                        // Existing objects count as complete work on an
-                        // incremental build. EXPECTED_OBJECTS includes the
-                        // generated C/C++, runtime and small support libraries.
                         val done = completedBefore.get() + if (p == null) 0 else n.coerceAtMost(t)
                         val f = (done.toFloat() / EXPECTED_OBJECTS).coerceIn(0f, 0.98f)
                         trySend(Progress(phase.get(), f, if (p == null) "" else "$n of $t"))
