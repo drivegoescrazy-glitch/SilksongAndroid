@@ -205,12 +205,17 @@ object PackageCompiler {
             "patch csc probe: exit=${probe.code} ok=${probe.ok} " +
                 "output=${probe.output.length}B",
         )
-        if (!probe.ok || probe.output.isBlank()) {
+        if (!probe.ok) {
             throw IOException(
                 "Roslyn could not start (exit ${probe.code}): " +
-                    probe.output.trim().takeLast(300).ifBlank { "no output from csc -version" },
+                    probe.output.trim().takeLast(300).ifBlank { "csc -version exited without diagnostics" },
             )
         }
+        // Some Android Mono-hosted Roslyn builds return zero for the version
+        // probe without writing to redirected stdout. That is not enough to
+        // prove the compiler is unusable: the real compile below is the
+        // authoritative check (it must produce a non-empty DLL). Do not stop
+        // a port solely because this optional probe was silent.
 
         val compilerArgs = buildList {
             add("-target:library")
