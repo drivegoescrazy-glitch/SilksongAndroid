@@ -7,7 +7,6 @@
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using UnityEngine;
-using System.Threading;
 
 public static class LoadPerformanceTuner
 {
@@ -16,7 +15,7 @@ public static class LoadPerformanceTuner
     {
         try
         {
-            Application.backgroundLoadingPriority = ThreadPriority.BelowNormal;
+            Application.backgroundLoadingPriority = UnityEngine.ThreadPriority.BelowNormal;
             Debug.Log("[LoadPerformanceTuner] background loading priority set to BelowNormal");
         }
         catch (System.Exception ex)
