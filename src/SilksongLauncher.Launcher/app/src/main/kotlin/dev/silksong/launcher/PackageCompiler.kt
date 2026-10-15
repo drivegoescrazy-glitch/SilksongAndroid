@@ -99,8 +99,19 @@ object PackageCompiler {
                 while (true) {
                     val entry = zip.nextEntry ?: break
                     val name = entry.name
-                    if (!name.startsWith(ROSLYN_PREFIX) || entry.isDirectory) continue
-                    val relative = name.removePrefix(ROSLYN_PREFIX)
+                    if (entry.isDirectory) continue
+
+                    // Prefer the netcore compiler directory, but some toolset
+                    // package layouts place shared dependency assemblies outside
+                    // that directory. Keep scanning the package for required
+                    // DLLs rather than declaring a valid download incomplete.
+                    val inCompilerDir = name.startsWith(ROSLYN_PREFIX)
+                    val basename = name.substringAfterLast('/')
+                    val isFallbackDependency = basename in ROSLYN_REQUIRED_FILES &&
+                        !inCompilerDir && !File(dir, basename).isFile
+                    if (!inCompilerDir && !isFallbackDependency) continue
+
+                    val relative = if (inCompilerDir) name.removePrefix(ROSLYN_PREFIX) else basename
                     if (relative.isBlank() || relative.startsWith("../") || relative.contains("/../")) continue
                     val destination = File(dir, relative)
                     if (!destination.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
