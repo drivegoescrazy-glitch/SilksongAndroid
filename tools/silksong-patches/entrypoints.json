@@ -82,11 +82,6 @@
       "loadTypes": 2
     },
     {
-      "className": "GcPerformanceTuner",
-      "methodName": "Bootstrap",
-      "loadTypes": 2
-    },
-    {
       "className": "ProfilerTopMarkers",
       "methodName": "Bootstrap",
       "loadTypes": 2
