@@ -66,6 +66,7 @@
 
 #if UNITY_ANDROID && !UNITY_EDITOR
 using UnityEngine;
+using UnityEngine.Scripting;
 
 public static class ResolutionConfigurator
 {
@@ -189,6 +190,23 @@ public static class ResolutionConfigurator
     {
         try
         {
+            // Spread managed-heap collection work across frames instead of
+            // allowing a full collection to create an occasional long frame.
+            // This is supported by the Android IL2CPP player; if a Unity build
+            // does not permit it, frame-rate setup still proceeds normally.
+            try
+            {
+                if (!GarbageCollector.isIncremental)
+                {
+                    GarbageCollector.isIncremental = true;
+                    Debug.Log("[ResolutionConfigurator] incremental GC enabled for smoother frame pacing");
+                }
+            }
+            catch (System.Exception gcEx)
+            {
+                Debug.LogWarning("[ResolutionConfigurator] incremental GC unavailable: " + gcEx.Message);
+            }
+
             int cap = LargestAcceptedCap();
 
             int stored = PlayerPrefs.GetInt(PREF_FRAME_CAP, -1);
