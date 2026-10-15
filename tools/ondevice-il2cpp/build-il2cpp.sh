@@ -251,8 +251,11 @@ compile_all() {
     # deterministic even though workers finish in a different order. This
     # only changes how input hashes are calculated, never compiler flags or
     # build outputs. HASH_JOBS can be set lower on slow storage.
+    # Hashing is storage/CPU work, not a compiler working set, so it can
+    # use more workers than the memory-capped compiler pool. Keep it bounded
+    # to avoid flooding slower shared-storage devices; HASH_JOBS can lower it.
     hash_jobs="${HASH_JOBS:-$JOBS}"
-    [ "$hash_jobs" -gt 4 ] && hash_jobs=4
+    [ "$hash_jobs" -gt 8 ] && hash_jobs=8
     [ "$hash_jobs" -lt 1 ] && hash_jobs=1
     echo "$srcs" | xargs -P "$hash_jobs" -n 16 sha256sum > obj/.now.raw
     sort -k2,2 obj/.now.raw > obj/.now
