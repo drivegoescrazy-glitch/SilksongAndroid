@@ -26,7 +26,7 @@ PLAYER_ROOT ?= $(SILKSONG_CACHE)/unity-player
 APK_DIR ?= build
 export SILKSONG_CACHE BUILD_ROOT PLAYER_ROOT APK_DIR
 # Kept in step with dev.sh; only used by the targets that talk to the device.
-PKG     ?= com.jakobkhansen.silksong
+PKG     ?= com.drivegoescrazy.silksongandroid.fixedstutters
 # The APK is named for the project and its version, not the application id, so
 # that a downloaded file says what it is. Same VERSION file build.sh reads.
 VERSION ?= $(shell tr -d ' \t\r\n' < VERSION 2>/dev/null)
