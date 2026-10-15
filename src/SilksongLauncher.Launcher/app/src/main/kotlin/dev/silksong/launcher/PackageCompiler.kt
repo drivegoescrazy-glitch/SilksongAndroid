@@ -297,25 +297,30 @@ object PackageCompiler {
 
         val out = ioAssembly(root)
         out.parentFile.mkdirs()
-        val rsp = File(root, "silksong-io.rsp")
-        rsp.printWriter().use { w ->
-            w.println("-target:library")
-            w.println("-out:\"${out.absolutePath}\"")
-            w.println("-optimize+")
-            w.println("-nostdlib+")
-            w.println("-noconfig")
-            w.println("-langversion:9.0")
-            w.println("-deterministic+")
-            w.println("-define:UNITY_ANDROID")
-            for (r in ioReferences(unity, depot)) w.println("-reference:\"${r.absolutePath}\"")
-            for (f in cs) w.println("\"$f\"")
+        out.delete()
+        val references = ioReferences(unity, depot)
+        val missingReferences = references.filterNot { it.isFile }
+        if (missingReferences.isNotEmpty()) {
+            throw IOException("SafeIo compiler references are missing: " +
+                missingReferences.take(5).joinToString { it.absolutePath })
+        }
+        val compilerArgs = buildList {
+            add("-target:library")
+            add("-out:${out.absolutePath}")
+            add("-optimize+")
+            add("-nostdlib+")
+            add("-noconfig")
+            add("-langversion:9.0")
+            add("-deterministic+")
+            add("-define:UNITY_ANDROID")
+            for (r in references) add("-reference:${r.absolutePath}")
+            addAll(cs)
         }
 
-        // Streamed to the log rather than only kept for the error path. A
-        // compiler that fails with nothing to say is the case that cost the
-        // most time here, and one line per invocation is a cheap insurance
-        // against meeting it again.
-        val result = MonoRuntime.exec(context, csc, listOf("@${rsp.absolutePath}"), cwd = root) { line ->
+        // Pass argv directly. The native hosting bridge preserves argv
+        // boundaries, so a response file adds a second parser and can hide
+        // quoting/encoding problems on device.
+        val result = MonoRuntime.exec(context, csc, compilerArgs, cwd = root) { line ->
             val t = line.trimEnd()
             if (t.isNotEmpty()) LauncherLog.log("csc: $t")
         }
@@ -422,22 +427,30 @@ object PackageCompiler {
 
             val out = File(outputDir(root), "$assembly.dll")
             out.parentFile.mkdirs()
-            val rsp = File(root, "$assembly.rsp")
-            rsp.printWriter().use { w ->
-                w.println("-target:library")
-                w.println("-out:\"${out.absolutePath}\"")
-                w.println("-optimize+")
-                w.println("-nostdlib+")
-                w.println("-noconfig")
-                w.println("-langversion:9.0")
-                w.println("-deterministic+")
-                w.println("-nowarn:0169,0414,0649,0067")
-                w.println("-define:UNITY_ANDROID;ENABLE_INPUT_SYSTEM")
-                for (r in refs) w.println("-reference:\"${r.absolutePath}\"")
-                for (f in cs) w.println("\"$f\"")
+            out.delete()
+            val missingReferences = refs.filterNot { it.isFile }
+            if (missingReferences.isNotEmpty()) {
+                throw IOException("$assembly compiler references are missing: " +
+                    missingReferences.take(5).joinToString { it.absolutePath })
+            }
+            val compilerArgs = buildList {
+                add("-target:library")
+                add("-out:${out.absolutePath}")
+                add("-optimize+")
+                add("-nostdlib+")
+                add("-noconfig")
+                add("-langversion:9.0")
+                add("-deterministic+")
+                add("-nowarn:0169,0414,0649,0067")
+                add("-define:UNITY_ANDROID,ENABLE_INPUT_SYSTEM")
+                for (r in refs) add("-reference:${r.absolutePath}")
+                addAll(cs)
             }
 
-            val result = MonoRuntime.exec(context, csc, listOf("@${rsp.absolutePath}"), cwd = root) { line ->
+            // Use the same direct-argv path as the game patches. Keeping a
+            // separate response-file path here meant the later build stages
+            // could fail for the same argument parsing reason.
+            val result = MonoRuntime.exec(context, csc, compilerArgs, cwd = root) { line ->
                 val t = line.trimEnd()
                 if (t.isNotEmpty()) LauncherLog.log("csc: $t")
             }
