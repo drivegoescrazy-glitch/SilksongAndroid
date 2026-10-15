@@ -99,6 +99,10 @@ object NativeBuild {
             // its own schedule.
             val phase = java.util.concurrent.atomic.AtomicReference("Compiling")
             val total = java.util.concurrent.atomic.AtomicInteger(EXPECTED_OBJECTS)
+            // Report progress across all native phases, not a fresh 0..100%
+            // for each one. Per-phase fractions made the overall bar hit its
+            // end as soon as generated C++ finished.
+            val completedBefore = java.util.concurrent.atomic.AtomicInteger(0)
             val prefix = java.util.concurrent.atomic.AtomicReference<String?>(null)
 
             // Progress comes from counting finished objects on a timer, not
@@ -115,8 +119,12 @@ object NativeBuild {
                     if (n != last) {
                         last = n
                         val t = total.get()
-                        val f = if (t > 0) (n.toFloat() / t).coerceIn(0f, 1f) else -1f
-                        trySend(Progress(phase.get(), f, "$n of $t"))
+                        // Existing objects count as complete work on an
+                        // incremental build. EXPECTED_OBJECTS includes the
+                        // generated C/C++, runtime and small support libraries.
+                        val done = completedBefore.get() + if (p == null) 0 else n.coerceAtMost(t)
+                        val f = (done.toFloat() / EXPECTED_OBJECTS).coerceIn(0f, 0.98f)
+                        trySend(Progress(phase.get(), f, if (p == null) "" else "$n of $t"))
                     }
                     delay(1000)
                 }
@@ -155,11 +163,20 @@ object NativeBuild {
                             text.startsWith("PHASE D") -> "Linking the engine" to null
                             else -> null
                         } ?: return@exec
+                        // Clear the old prefix before crediting its phase, so
+                        // the ticker cannot briefly double-count old objects.
+                        val previousPrefix = prefix.getAndSet(null)
+                        if (previousPrefix != null) completedBefore.addAndGet(total.get())
                         Regex("\\((\\d+) TUs\\)").find(text)?.groupValues?.get(1)?.toIntOrNull()
                             ?.let { total.set(it) }
                         phase.set(named.first)
                         prefix.set(named.second)
-                        if (named.second == null) trySend(Progress(named.first, -1f, ""))
+                        if (named.second == null) {
+                            // Support-library compilation and linking still
+                            // take time; preserve the aggregate fraction here.
+                            trySend(Progress(named.first,
+                                (completedBefore.get().toFloat() / EXPECTED_OBJECTS).coerceIn(0f, 0.98f), ""))
+                        }
                     }
                 }
             } finally {
