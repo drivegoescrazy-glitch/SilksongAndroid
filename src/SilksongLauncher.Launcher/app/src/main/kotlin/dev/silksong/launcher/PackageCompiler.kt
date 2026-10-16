@@ -180,18 +180,46 @@ object PackageCompiler {
             for (f in cs) w.println("\"$f\"")
         }
 
-        val result = MonoRuntime.exec(
+        val references = patchReferences(unity, depot)
+        val missingReferences = references.filter { !it.isFile || it.length() <= 0 }
+        if (missingReferences.isNotEmpty()) {
+            throw IOException("patch references are missing: ${missingReferences.take(8).joinToString { it.absolutePath }}")
+        }
+
+        // Never let a partial or stale DLL make a failed compile look usable.
+        out.delete()
+
+        suspend fun runPatchCompiler(): Toolchain.Result = MonoRuntime.exec(
             context,
             csc,
             listOf("@${rsp.absolutePath}"),
             cwd = root,
+        ) { line ->
+            val trimmed = line.trimEnd()
+            if (trimmed.isNotEmpty()) LauncherLog.log("patch csc: $trimmed")
+        }
+
+        var result = runPatchCompiler()
+        // A Roslyn process can occasionally return non-zero without producing a
+        // diagnostic. Retry that specific case once in a fresh builder process;
+        // if it persists, keep the evidence instead of reporting only "0 errors".
+        if (!result.ok && result.output.isBlank()) {
+            LauncherLog.log("Patch compiler exited ${result.code} without output; retrying once in a fresh builder process")
+            out.delete()
+            result = runPatchCompiler()
+        }
+
+        LauncherLog.log(
+            "Patch compile: exit=${result.code} ok=${result.ok} output=${result.output.length}B " +
+                "dll=${out.length()}B sources=${cs.size} references=${references.size} rsp=${rsp.absolutePath}",
         )
         if (!result.ok || out.length() <= 0) {
             val errors = result.output.lineSequence().filter { it.contains("error CS") }.toList()
-            throw IOException(
-                "the patches did not compile (${errors.size} errors): " +
-                    (errors.firstOrNull() ?: "exit ${result.code}").trim().take(300),
-            )
+            val detail = errors.firstOrNull()
+                ?: result.output.trim().lines().takeLast(8).joinToString(" | ").ifBlank {
+                    "exit ${result.code}; no compiler output (response file: ${rsp.absolutePath})"
+                }
+            throw IOException("the patches did not compile (${errors.size} C# errors): ${detail.trim().take(700)}")
         }
         LauncherLog.log("SilksongPatches.dll: ${out.length()} bytes from ${cs.size} sources")
         send(Progress("Patches ready", 1f, ""))
